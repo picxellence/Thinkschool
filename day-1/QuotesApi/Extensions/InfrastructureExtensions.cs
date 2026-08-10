@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using QuotesApi.Data;
+using QuotesApi.Repositories;
 
 namespace QuotesApi.Extensions;
 
@@ -11,6 +12,7 @@ public static class InfrastructureExtensions
             options.UseSqlite(config.GetConnectionString("Default") ?? "Data Source=quotes.db"));
 
         services.AddScoped<IQuoteRepository, QuoteRepository>();
+        services.AddScoped<ICollectionRepository, CollectionRepository>();
 
         return services;
     }

@@ -38,3 +38,50 @@ A real REST API for storing quotes, built with EF Core + SQLite.
 ### What surprised me
 
 Sending a POST without an author or text should return a 400 instead of crashing.
+
+# OrdersApi — Day 1 Refactor Exercise
+
+This project is part of the Thinkschool Day 1 refactoring exercise.
+
+## Objective
+
+Create a deliberately poor ASP.NET Core API implementation and identify the design and maintainability problems before refactoring.
+
+## Included Files
+
+* `Controllers/OrderController.cs` — intentionally bad controller implementation
+* `REFRACTOR_NOTES.md` — identified code smells, consequences, and intended fixes
+* `PROMPT.md` — original prompt used to generate the legacy-style controller
+
+## Intentional Problems in OrderController
+
+* One giant POST endpoint
+* Mixed validation, business logic, data access, and HTTP response shaping
+* Empty `catch {}` blocks
+* Synchronous EF Core calls inside an `async` method
+* `object` return type instead of typed responses
+* Off-by-one bug
+* Potential null reference bug
+* Multiple `SaveChanges()` calls
+* No tests
+
+## Build
+
+```bash
+dotnet build
+```
+
+The project builds successfully. Existing warnings are intentional and are part of the exercise.
+
+## Next Refactoring Step
+
+Planned architecture:
+
+* Controller
+* Service
+* Repository
+* DTOs
+* Validation layer
+* Unit tests
+* Integration test
+

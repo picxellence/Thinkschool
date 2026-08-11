@@ -85,3 +85,23 @@ Planned architecture:
 * Unit tests
 * Integration test
 
+## Day 2 — Dependency Injection at Depth
+Added a proper `IClock` abstraction to `QuotesApi`, registered as a Singleton, replacing direct `DateTime.UtcNow` calls.
+
+- `day-1/QuotesApi/Services/IClock.cs` + `SystemClock.cs` — clock abstraction
+- Wired through `Collection` → `CollectionItem` → the `/collections/{id}/items` endpoint
+- `day-1/QuotesApi.Tests/` — test using a `FakeClock` to prove timestamps are deterministic and testable
+
+### What it demonstrates
+- Correct use of Transient / Scoped / Singleton DI lifetimes
+- Why hidden dependencies (like `DateTime.UtcNow`) make code hard to test
+- Constructor injection over creating dependencies inline
+
+## Day 2 — async/await with Cancellation Through Layers
+Verified and proved that `CancellationToken` flows correctly through every layer of the Collection endpoints: endpoint → repository → EF Core.
+
+- `day-1/QuotesApi.Tests/CancellationTests.cs` — integration test using `WebApplicationFactory` that cancels a token mid-request and confirms the operation is not silently completed
+
+### What it demonstrates
+- `CancellationToken` must be manually threaded through every async layer — it isn't automatic
+- Testing cancellation behavior with a real in-memory HTTP client instead of guessing

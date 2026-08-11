@@ -16,29 +16,90 @@ public static class EndpointExtensions
 
         var auth = app.MapGroup("/api/auth");
 
-        auth.MapPost("/login", async (LoginRequest request, QuotesDbContext db, IJwtTokenService tokenService, CancellationToken ct) =>
+auth.MapPost("/login", async (LoginRequest request, QuotesDbContext db, IJwtTokenService tokenService, IConfiguration config, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
+        return Results.BadRequest(new { error = "Email and password are required." });
+
+    var normalizedEmail = request.Email.Trim().ToLowerInvariant();
+    var user = await db.Users.FirstOrDefaultAsync(u => u.Email == normalizedEmail, ct);
+
+    if (user is null || !user.VerifyPassword(request.Password))
+        return Results.Unauthorized();
+
+    var accessToken = tokenService.GenerateAccessToken(user);
+    var refreshTokenPlain = tokenService.GenerateRefreshToken();
+
+    var refreshDays = int.Parse(config["Jwt:RefreshTokenDays"]!);
+    var refreshTokenEntity = RefreshToken.Create(refreshTokenPlain, user.Id, DateTimeOffset.UtcNow.AddDays(refreshDays));
+    db.RefreshTokens.Add(refreshTokenEntity);
+    await db.SaveChangesAsync(ct);
+
+    var response = new LoginResponse
     {
-        if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
-            return Results.BadRequest(new { error = "Email and password are required." });
+        AccessToken = accessToken,
+        RefreshToken = refreshTokenPlain,
+        ExpiresIn = tokenService.AccessTokenMinutes * 60
+    };
 
-        var normalizedEmail = request.Email.Trim().ToLowerInvariant();
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Email == normalizedEmail, ct);
+    return Results.Ok(response);
+});
 
-        if (user is null || !user.VerifyPassword(request.Password))
-            return Results.Unauthorized();
+auth.MapPost("/refresh", async (RefreshRequest request, QuotesDbContext db, IJwtTokenService tokenService, IConfiguration config, ILogger<Program> logger, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(request.RefreshToken))
+        return Results.BadRequest(new { error = "Refresh token is required." });
 
-        var accessToken = tokenService.GenerateAccessToken(user);
-        var refreshToken = tokenService.GenerateRefreshToken();
+    var presentedHash = RefreshToken.Hash(request.RefreshToken);
+    var storedToken = await db.RefreshTokens.FirstOrDefaultAsync(t => t.TokenHash == presentedHash, ct);
 
-        var response = new LoginResponse
-        {
-            AccessToken = accessToken,
-            RefreshToken = refreshToken,
-            ExpiresIn = tokenService.AccessTokenMinutes * 60
-        };
+    if (storedToken is null)
+        return Results.Unauthorized();
 
-        return Results.Ok(response);
+    // Reuse detection: token was already revoked/replaced, but is being presented again
+    if (storedToken.RevokedAt is not null)
+    {
+        logger.LogWarning("SECURITY: Refresh token reuse detected for user {UserId}. Revoking entire token family.", storedToken.UserId);
+
+        // Revoke every active refresh token for this user (kills the whole chain)
+        var allUserTokens = await db.RefreshTokens
+            .Where(t => t.UserId == storedToken.UserId && t.RevokedAt == null)
+            .ToListAsync(ct);
+
+        foreach (var t in allUserTokens)
+            t.Revoke();
+
+        await db.SaveChangesAsync(ct);
+
+        return Results.Unauthorized();
+    }
+
+    if (storedToken.ExpiresAt <= DateTimeOffset.UtcNow)
+        return Results.Unauthorized();
+
+    var user = await db.Users.FirstOrDefaultAsync(u => u.Id == storedToken.UserId, ct);
+    if (user is null)
+        return Results.Unauthorized();
+
+    // Rotate: mint new pair, revoke the old one, link them
+    var newAccessToken = tokenService.GenerateAccessToken(user);
+    var newRefreshTokenPlain = tokenService.GenerateRefreshToken();
+    var refreshDays = int.Parse(config["Jwt:RefreshTokenDays"]!);
+    var newRefreshTokenEntity = RefreshToken.Create(newRefreshTokenPlain, user.Id, DateTimeOffset.UtcNow.AddDays(refreshDays));
+
+    db.RefreshTokens.Add(newRefreshTokenEntity);
+    await db.SaveChangesAsync(ct);
+
+    storedToken.Revoke(newRefreshTokenEntity.TokenHash);
+    await db.SaveChangesAsync(ct);
+
+    return Results.Ok(new LoginResponse
+    {
+        AccessToken = newAccessToken,
+        RefreshToken = newRefreshTokenPlain,
+        ExpiresIn = tokenService.AccessTokenMinutes * 60
     });
+});
 
         group.MapGet("", async (int page, int size, IQuoteRepository repo, CancellationToken ct) =>
         {

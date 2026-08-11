@@ -15,6 +15,7 @@ public static class InfrastructureExtensions
         services.AddScoped<IQuoteRepository, QuoteRepository>();
         services.AddScoped<ICollectionRepository, CollectionRepository>();
         services.AddSingleton<IClock, SystemClock>();
+        services.AddSingleton<IJwtTokenService, JwtTokenService>();
 
         return services;
     }

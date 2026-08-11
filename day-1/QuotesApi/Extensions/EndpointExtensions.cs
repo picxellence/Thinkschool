@@ -3,6 +3,7 @@ using QuotesApi.Data;
 using QuotesApi.Models;
 using QuotesApi.Repositories;
 using QuotesApi.Services;
+using Microsoft.EntityFrameworkCore;
 
 
 namespace QuotesApi.Extensions;
@@ -12,6 +13,32 @@ public static class EndpointExtensions
     public static void MapQuoteEndpoints(this WebApplication app)
     {
         var group = app.MapGroup("/api/quotes");
+
+        var auth = app.MapGroup("/api/auth");
+
+        auth.MapPost("/login", async (LoginRequest request, QuotesDbContext db, IJwtTokenService tokenService, CancellationToken ct) =>
+    {
+        if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
+            return Results.BadRequest(new { error = "Email and password are required." });
+
+        var normalizedEmail = request.Email.Trim().ToLowerInvariant();
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Email == normalizedEmail, ct);
+
+        if (user is null || !user.VerifyPassword(request.Password))
+            return Results.Unauthorized();
+
+        var accessToken = tokenService.GenerateAccessToken(user);
+        var refreshToken = tokenService.GenerateRefreshToken();
+
+        var response = new LoginResponse
+        {
+            AccessToken = accessToken,
+            RefreshToken = refreshToken,
+            ExpiresIn = tokenService.AccessTokenMinutes * 60
+        };
+
+        return Results.Ok(response);
+    });
 
         group.MapGet("", async (int page, int size, IQuoteRepository repo, CancellationToken ct) =>
         {
@@ -41,13 +68,13 @@ public static class EndpointExtensions
             var quote = new Quote { Author = request.Author, Text = request.Text };
             var created = await repo.AddAsync(quote, ct);
             return Results.Created($"/api/quotes/{created.Id}", created);
-        });
+        }).RequireAuthorization();
 
         group.MapDelete("/{id:int}", async (int id, IQuoteRepository repo, CancellationToken ct) =>
         {
             var deleted = await repo.DeleteAsync(id, ct);
             return deleted ? Results.NoContent() : Results.NotFound();
-        });
+        }).RequireAuthorization();
 
         var collections = app.MapGroup("/collections");
 

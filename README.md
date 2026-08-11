@@ -105,3 +105,21 @@ Verified and proved that `CancellationToken` flows correctly through every layer
 ### What it demonstrates
 - `CancellationToken` must be manually threaded through every async layer — it isn't automatic
 - Testing cancellation behavior with a real in-memory HTTP client instead of guessing
+
+## Day 2 — Test the Domain Layer
+Pure unit tests for the `Collection` aggregate's business rules, using xUnit + FluentAssertions. No database, no HTTP — just the aggregate's own logic.
+
+- `day-1/Tests.Domain/` — test project
+
+### Invariants tested
+- Empty name throws
+- Name over 80 characters throws
+- Adding a 51st item throws
+- Adding a duplicate quote ID throws
+- Removing a non-existent item throws
+- Add-then-remove leaves zero items
+
+### What it demonstrates
+- Domain/aggregate logic can be tested in isolation, fast and without infrastructure
+- FluentAssertions for more readable test assertions
+- Test result: 6 passed, 0 failed

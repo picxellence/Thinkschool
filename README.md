@@ -148,3 +148,22 @@ Refactored the `Quote` entity from an anemic model (plain public properties) to 
 - Valid quote → 201 Created
 - Empty author → 400, "Author is required."
 - Text over 1000 chars → 400, "Text must be 1-1000 characters."
+
+## Day 2 — Implement JWT Auth (Own Issuer)
+Added self-contained authentication to `QuotesApi`: users log in with email/password, receive a signed JWT access token and a refresh token, and protected endpoints reject requests without a valid token.
+
+- `day-1/QuotesApi/Models/User.cs` — entity with BCrypt-hashed passwords
+- `day-1/QuotesApi/Services/JwtTokenService.cs` — mints HS256-signed access tokens + random refresh tokens
+- `POST /api/auth/login` — takes `{email, password}`, returns `{accessToken, refreshToken, expiresIn}`
+- `POST` and `DELETE` on `/api/quotes` now require a valid token (`.RequireAuthorization()`); `GET` stays open
+
+### What it demonstrates
+- Password hashing with BCrypt.Net-Next — never rolling your own
+- JWT signing with HS256, key loaded from configuration, never hardcoded
+- `AddAuthentication().AddJwtBearer()` + `AddAuthorization()` middleware pipeline
+- Access tokens (short-lived, 15 min) vs refresh tokens (long-lived, opaque random string)
+
+### Verified with curl
+- No token → 401 Unauthorized, `WWW-Authenticate: Bearer`
+- Valid token → 201 Created
+- Expired token: middleware configured (`ValidateLifetime: true`) but not confirmed live

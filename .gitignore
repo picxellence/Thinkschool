@@ -4,3 +4,4 @@ obj/
 
 # Node
 node_modules/
+QuotesApi/quotes.db

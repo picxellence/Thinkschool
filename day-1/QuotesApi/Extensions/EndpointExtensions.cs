@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Mvc;
 using QuotesApi.Data;
 using QuotesApi.Models;
 using QuotesApi.Repositories;
+using QuotesApi.Services;
+
 
 namespace QuotesApi.Extensions;
 
@@ -72,24 +74,18 @@ public static class EndpointExtensions
             }
         });
 
-        collections.MapPost("/{id:int}/items", async (int id, AddCollectionItemRequest request, ICollectionRepository repo, CancellationToken ct) =>
+        collections.MapPost("/{id:int}/items", async (int id, AddCollectionItemRequest request, ICollectionRepository repo, IClock clock, CancellationToken ct) =>
         {
             if (request.QuoteId <= 0)
                 return Results.BadRequest(new { error = "QuoteId is required." });
-
             var collection = await repo.GetByIdAsync(id, ct);
             if (collection is null)
                 return Results.NotFound();
-
             try
             {
-                collection.AddItem(request.QuoteId);
+                collection.AddItem(request.QuoteId, clock.UtcNow);
                 await repo.UpdateAsync(collection, ct);
                 return Results.Ok(collection);
-            }
-            catch (ArgumentException ex)
-            {
-                return Results.BadRequest(new { error = ex.Message });
             }
             catch (InvalidOperationException ex)
             {

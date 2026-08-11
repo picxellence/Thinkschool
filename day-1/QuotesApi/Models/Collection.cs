@@ -17,16 +17,14 @@ public class Collection
         OwnerId = ownerId;
     }
 
-    public void AddItem(int quoteId)
-    {
-        if (_items.Count >= 50)
-            throw new InvalidOperationException("A collection cannot contain more than 50 items.");
-
-        if (_items.Any(i => i.QuoteId == quoteId))
-            throw new InvalidOperationException("Duplicate quotes are not allowed in a collection.");
-
-        _items.Add(new CollectionItem(quoteId));
-    }
+    public void AddItem(int quoteId, DateTimeOffset addedAt)
+{
+    if (_items.Count >= 50)
+        throw new InvalidOperationException("A collection cannot contain more than 50 items.");
+    if (_items.Any(i => i.QuoteId == quoteId))
+        throw new InvalidOperationException("Duplicate quotes are not allowed in a collection.");
+    _items.Add(new CollectionItem(quoteId, addedAt));
+}
 
     public void RemoveItem(int quoteId)
     {

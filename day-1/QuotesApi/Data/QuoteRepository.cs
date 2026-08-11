@@ -18,6 +18,7 @@ public class QuoteRepository : IQuoteRepository
     {
         _logger.LogInformation("Fetching quotes page {Page} size {Size}", page, size);
         return await _context.Quotes
+            .Where(q => !q.IsDeleted)
             .OrderBy(q => q.Id)
             .Skip((page - 1) * size)
             .Take(size)
@@ -26,7 +27,9 @@ public class QuoteRepository : IQuoteRepository
 
     public async Task<Quote?> GetByIdAsync(int id, CancellationToken ct)
     {
-        return await _context.Quotes.FirstOrDefaultAsync(q => q.Id == id, ct);
+        return await _context.Quotes
+            .Where(q => !q.IsDeleted)
+            .FirstOrDefaultAsync(q => q.Id == id, ct);
     }
 
     public async Task<Quote> AddAsync(Quote quote, CancellationToken ct)
@@ -40,11 +43,12 @@ public class QuoteRepository : IQuoteRepository
     public async Task<bool> DeleteAsync(int id, CancellationToken ct)
     {
         var quote = await _context.Quotes.FirstOrDefaultAsync(q => q.Id == id, ct);
-        if (quote is null) return false;
+        if (quote is null || quote.IsDeleted)
+            return false;
 
-        _context.Quotes.Remove(quote);
+        quote.SoftDelete();
         await _context.SaveChangesAsync(ct);
-        _logger.LogInformation("Deleted quote {Id}", id);
+        _logger.LogInformation("Soft deleted quote {Id}", id);
         return true;
     }
 }

@@ -14,6 +14,21 @@ public class QuotesDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
+        modelBuilder.Entity<Quote>(entity =>
+        {
+            entity.Property(q => q.Author)
+                .IsRequired()
+                .HasMaxLength(200);
+
+            entity.Property(q => q.Text)
+                .IsRequired()
+                .HasMaxLength(1000);
+
+            entity.Property(q => q.IsDeleted)
+                .IsRequired()
+                .HasDefaultValue(false);
+        });
+
         modelBuilder.Entity<Collection>(entity =>
         {
             entity.Property(c => c.Name)

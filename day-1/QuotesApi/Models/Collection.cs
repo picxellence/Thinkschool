@@ -27,12 +27,12 @@ public class Collection
 }
 
     public void RemoveItem(int quoteId)
-    {
-        var item = _items.FirstOrDefault(i => i.QuoteId == quoteId);
-
-        if (item != null)
-            _items.Remove(item);
-    }
+{
+    var item = _items.FirstOrDefault(i => i.QuoteId == quoteId);
+    if (item is null)
+        throw new InvalidOperationException($"No item with quote id {quoteId} exists in this collection.");
+    _items.Remove(item);
+}
 
     private void SetName(string name)
     {

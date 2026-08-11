@@ -123,3 +123,28 @@ Pure unit tests for the `Collection` aggregate's business rules, using xUnit + F
 - Domain/aggregate logic can be tested in isolation, fast and without infrastructure
 - FluentAssertions for more readable test assertions
 - Test result: 6 passed, 0 failed
+
+
+## Day 2 — AI-assisted Refactor: Anemic to Rich
+Refactored the `Quote` entity from an anemic model (plain public properties) to a rich domain model that enforces its own rules. Done on branch `anemic-to-rich` using GitHub Copilot Chat.
+
+- `day-1/QuotesApi/Models/Quote.cs` — private setters, `IsDeleted` soft-delete flag, static factory
+- `day-1/QuotesApi/Models/Result.cs` — generic success/failure wrapper used instead of exceptions
+- `day-1/QuotesApi/WHY.md` — what the rich model buys over the anemic one
+
+### Invariants enforced
+- Author: 1–200 characters
+- Text: 1–1000 characters
+- Text can never be changed after creation — only soft-deleted via `IsDeleted`
+- Construction only through `Quote.Create(author, text)`, returning `Result<Quote>`
+
+### What changed to support it
+- `EndpointExtensions.cs` — `POST /api/quotes` now calls `Quote.Create()` instead of an object initializer
+- `QuoteRepository.cs` — delete calls `quote.SoftDelete()`; reads filter out soft-deleted quotes
+- `QuotesDbContext.cs` — added matching max-length constraints
+- New EF Core migration (`AddQuoteRichDomainModel`) for the `IsDeleted` column
+
+### Verified with curl
+- Valid quote → 201 Created
+- Empty author → 400, "Author is required."
+- Text over 1000 chars → 400, "Text must be 1-1000 characters."

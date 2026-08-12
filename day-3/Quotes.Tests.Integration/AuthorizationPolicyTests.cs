@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -25,18 +26,30 @@ namespace Quotes.Tests.Integration;
 // those reads. Environment variables are picked up by WebApplication.CreateBuilder itself, so
 // setting them (then restoring immediately after the host is forced to build) is what actually
 // reaches those early reads without leaking into other tests' processes for longer than necessary.
+//
+// Isolation moved from "one SQLite file per test" to "one database per test on the
+// shared SQL Server container" — the container itself is started once for the whole
+// class via SqlServerContainerFixture; each factory instance creates and drops its
+// own uniquely named database on it.
 public class PolicyTestFactory : WebApplicationFactory<Program>
 {
     public const string JwtKey = "authz-policy-tests-signing-key-do-not-use-in-prod!";
     public const string JwtIssuer = "QuotesApi.Tests";
     public const string JwtAudience = "QuotesApi.Tests.Clients";
 
-    private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"quotesapi-authz-tests-{Guid.NewGuid():N}.db");
+    private readonly string _masterConnectionString;
+    private readonly string _databaseName = $"quotes_test_{Guid.NewGuid():N}";
+    private readonly string _databaseConnectionString;
 
     public FakeClock Clock { get; } = new(DateTimeOffset.UtcNow);
 
-    public PolicyTestFactory()
+    public PolicyTestFactory(string masterConnectionString)
     {
+        _masterConnectionString = masterConnectionString;
+        _databaseConnectionString = WithDatabase(masterConnectionString, _databaseName);
+
+        CreateDatabase();
+
         var overrides = new Dictionary<string, string?>
         {
             ["Jwt__Key"] = JwtKey,
@@ -46,7 +59,8 @@ public class PolicyTestFactory : WebApplicationFactory<Program>
             ["Jwt__RefreshTokenDays"] = "7",
             ["Entra__TenantId"] = "00000000-0000-0000-0000-000000000000",
             ["Entra__Audience"] = "00000000-0000-0000-0000-000000000001",
-            ["ConnectionStrings__Default"] = $"Data Source={_dbPath}"
+            ["Database__Provider"] = "SqlServer",
+            ["ConnectionStrings__Default"] = _databaseConnectionString
         };
 
         var originalValues = new Dictionary<string, string?>();
@@ -113,21 +127,54 @@ public class PolicyTestFactory : WebApplicationFactory<Program>
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
+    private void CreateDatabase()
+    {
+        using var connection = new SqlConnection(_masterConnectionString);
+        connection.Open();
+
+        using var command = connection.CreateCommand();
+        command.CommandText = $"CREATE DATABASE [{_databaseName}]";
+        command.ExecuteNonQuery();
+    }
+
+    private void DropDatabase()
+    {
+        using var connection = new SqlConnection(_masterConnectionString);
+        connection.Open();
+
+        using var command = connection.CreateCommand();
+        // Force out any pooled connections still attached to the database first,
+        // otherwise DROP DATABASE fails with "database is currently in use".
+        command.CommandText = $"""
+            ALTER DATABASE [{_databaseName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+            DROP DATABASE [{_databaseName}];
+            """;
+        command.ExecuteNonQuery();
+    }
+
+    private static string WithDatabase(string connectionString, string databaseName)
+    {
+        var builder = new SqlConnectionStringBuilder(connectionString) { InitialCatalog = databaseName };
+        return builder.ConnectionString;
+    }
+
     protected override void Dispose(bool disposing)
     {
         base.Dispose(disposing);
 
-        foreach (var path in new[] { _dbPath, $"{_dbPath}-wal", $"{_dbPath}-shm" })
-        {
-            if (File.Exists(path))
-                File.Delete(path);
-        }
+        DropDatabase();
     }
 }
 
+[Collection(SqlServerCollection.Name)]
 public class AuthorizationPolicyTests : IDisposable
 {
-    private readonly PolicyTestFactory _factory = new();
+    private readonly PolicyTestFactory _factory;
+
+    public AuthorizationPolicyTests(SqlServerContainerFixture sqlServerFixture)
+    {
+        _factory = new PolicyTestFactory(sqlServerFixture.ConnectionString);
+    }
 
     public void Dispose()
     {

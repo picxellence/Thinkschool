@@ -129,6 +129,7 @@ builder.Services.AddAuthorization(options =>
 
 builder.Services.AddTransient<IClaimsTransformation, ScopeClaimsTransformation>();
 builder.Services.AddSingleton<IAuthorizationHandler, MustOwnQuoteHandler>();
+builder.Services.AddSingleton<IAuthorizationHandler, MustOwnCollectionHandler>();
 
 var app = builder.Build();
 

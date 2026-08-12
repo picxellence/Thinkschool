@@ -1,3 +1,3 @@
 namespace QuotesApi.Models;
 
-public record CreateCollectionRequest(string Name, int OwnerId);
+public record CreateCollectionRequest(string Name);

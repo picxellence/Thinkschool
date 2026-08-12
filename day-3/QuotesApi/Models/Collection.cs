@@ -5,16 +5,18 @@ public class Collection
     public int Id { get; private set; }
     public string Name { get; private set; }
     public int OwnerId { get; private set; }
+    public string? OwnerUserId { get; private set; }
 
     private readonly List<CollectionItem> _items = new();
     public IReadOnlyCollection<CollectionItem> Items => _items.AsReadOnly();
 
     private Collection() { }
 
-    public Collection(string name, int ownerId)
+    public Collection(string name, int ownerId, string? ownerUserId = null)
     {
         SetName(name);
         OwnerId = ownerId;
+        OwnerUserId = ownerUserId;
     }
 
     public void AddItem(int quoteId, DateTimeOffset addedAt)

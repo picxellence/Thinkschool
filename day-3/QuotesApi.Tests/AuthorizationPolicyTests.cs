@@ -6,7 +6,10 @@ using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
+using QuotesApi.Data;
+using QuotesApi.Models;
 using Xunit;
 
 namespace QuotesApi.Tests;
@@ -75,6 +78,25 @@ public class AuthorizationPolicyTestsFactory : WebApplicationFactory<Program>
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
+    public string MintExpiredToken(string sub, params string[] scopes)
+    {
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(JwtKey));
+        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var claims = new List<Claim> { new(JwtRegisteredClaimNames.Sub, sub) };
+        claims.AddRange(scopes.Select(scope => new Claim("scope", scope)));
+
+        var token = new JwtSecurityToken(
+            issuer: JwtIssuer,
+            audience: JwtAudience,
+            claims: claims,
+            notBefore: DateTime.UtcNow.AddMinutes(-20),
+            expires: DateTime.UtcNow.AddMinutes(-10),
+            signingCredentials: credentials);
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
     protected override void Dispose(bool disposing)
     {
         base.Dispose(disposing);
@@ -108,6 +130,19 @@ public class AuthorizationPolicyTests : IClassFixture<AuthorizationPolicyTestsFa
         return (await response.Content.ReadFromJsonAsync<QuoteDto>())!;
     }
 
+    private async Task<(string Email, string Password)> CreateDbUserAsync()
+    {
+        var email = $"{Guid.NewGuid():N}@example.com";
+        const string password = "Password123!";
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<QuotesDbContext>();
+        db.Users.Add(User.Create(email, password));
+        await db.SaveChangesAsync();
+
+        return (email, password);
+    }
+
     [Fact]
     public async Task Post_WithWriteScope_Returns201()
     {
@@ -132,6 +167,16 @@ public class AuthorizationPolicyTests : IClassFixture<AuthorizationPolicyTestsFa
     public async Task Post_WithNoToken_Returns401()
     {
         var client = CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/quotes", new { author = "A", text = "T" });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Post_WithExpiredToken_Returns401()
+    {
+        var client = CreateClient(_factory.MintExpiredToken(Guid.NewGuid().ToString(), "quotes.write"));
 
         var response = await client.PostAsJsonAsync("/api/quotes", new { author = "A", text = "T" });
 
@@ -174,5 +219,62 @@ public class AuthorizationPolicyTests : IClassFixture<AuthorizationPolicyTestsFa
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Refresh_ReusingRevokedToken_Returns401()
+    {
+        var (email, password) = await CreateDbUserAsync();
+        var client = _factory.CreateClient();
+
+        var loginResponse = await client.PostAsJsonAsync("/api/auth/login", new { email, password });
+        loginResponse.EnsureSuccessStatusCode();
+        var login = await loginResponse.Content.ReadFromJsonAsync<LoginResponseDto>();
+
+        var rotateResponse = await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = login!.RefreshToken });
+        rotateResponse.EnsureSuccessStatusCode();
+
+        var reuseResponse = await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = login.RefreshToken });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, reuseResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task Post_Collection_StampsCallerAsOwner()
+    {
+        var caller = Guid.NewGuid().ToString();
+        var client = CreateClient(_factory.MintToken(caller, "quotes.write"));
+
+        var response = await client.PostAsJsonAsync("/collections", new { name = "Test Collection" });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var collection = await response.Content.ReadFromJsonAsync<CollectionDto>();
+        Assert.Equal(caller, collection!.OwnerUserId);
+    }
+
+    [Fact]
+    public async Task AddItem_ByNonOwner_Returns403()
+    {
+        var ownerClient = CreateClient(_factory.MintToken(Guid.NewGuid().ToString(), "quotes.write"));
+        var created = await ownerClient.PostAsJsonAsync("/collections", new { name = "Owner Collection" });
+        created.EnsureSuccessStatusCode();
+        var collection = await created.Content.ReadFromJsonAsync<CollectionDto>();
+
+        var otherClient = CreateClient(_factory.MintToken(Guid.NewGuid().ToString(), "quotes.write"));
+        var response = await otherClient.PostAsJsonAsync($"/collections/{collection!.Id}/items", new { quoteId = 1 });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Post_Collection_Anonymous_Returns401()
+    {
+        var client = CreateClient();
+
+        var response = await client.PostAsJsonAsync("/collections", new { name = "Anon Collection" });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
     private record QuoteDto(int Id, string Author, string Text, string? CreatedByUserId);
+    private record CollectionDto(int Id, string Name, int OwnerId, string? OwnerUserId);
+    private record LoginResponseDto(string AccessToken, string RefreshToken, int ExpiresIn);
 }

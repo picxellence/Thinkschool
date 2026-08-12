@@ -104,10 +104,11 @@ auth.MapPost("/refresh", async (RefreshRequest request, QuotesDbContext db, IJwt
     });
 });
 
-        group.MapGet("", async (int page, int size, IQuoteRepository repo, CancellationToken ct) =>
+        group.MapGet("", async (IQuoteRepository repo, CancellationToken ct, int page = 1, int size = 10) =>
         {
             if (page < 1) page = 1;
             if (size < 1) size = 10;
+            if (size > 100) size = 100;
             var quotes = await repo.GetPagedAsync(page, size, ct);
             return Results.Ok(quotes);
         });
@@ -151,20 +152,20 @@ auth.MapPost("/refresh", async (RefreshRequest request, QuotesDbContext db, IJwt
 
         var collections = app.MapGroup("/collections");
 
-        collections.MapPost("", async (CreateCollectionRequest request, ICollectionRepository repo, CancellationToken ct) =>
+        collections.MapPost("", async (CreateCollectionRequest request, ClaimsPrincipal user, ICollectionRepository repo, CancellationToken ct) =>
         {
             var errors = new Dictionary<string, string[]>();
             if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length < 3 || request.Name.Length > 80)
                 errors["name"] = new[] { "Name is required and must be between 3 and 80 characters." };
-            if (request.OwnerId <= 0)
-                errors["ownerId"] = new[] { "OwnerId is required." };
 
             if (errors.Count > 0)
                 return Results.ValidationProblem(errors);
 
+            var ownerUserId = user.FindFirst("oid")?.Value ?? user.FindFirst("sub")?.Value;
+
             try
             {
-                var collection = new Collection(request.Name, request.OwnerId);
+                var collection = new Collection(request.Name, ownerId: 0, ownerUserId: ownerUserId);
                 var created = await repo.AddAsync(collection, ct);
                 return Results.Created($"/collections/{created.Id}", created);
             }
@@ -172,15 +173,20 @@ auth.MapPost("/refresh", async (RefreshRequest request, QuotesDbContext db, IJwt
             {
                 return Results.BadRequest(new { error = ex.Message });
             }
-        });
+        }).RequireAuthorization("can-edit-quotes");
 
-        collections.MapPost("/{id:int}/items", async (int id, AddCollectionItemRequest request, ICollectionRepository repo, IClock clock, CancellationToken ct) =>
+        collections.MapPost("/{id:int}/items", async (int id, AddCollectionItemRequest request, ClaimsPrincipal user, ICollectionRepository repo, IAuthorizationService authService, IClock clock, CancellationToken ct) =>
         {
             if (request.QuoteId <= 0)
                 return Results.BadRequest(new { error = "QuoteId is required." });
             var collection = await repo.GetByIdAsync(id, ct);
             if (collection is null)
                 return Results.NotFound();
+
+            var authResult = await authService.AuthorizeAsync(user, collection, new MustOwnCollectionRequirement());
+            if (!authResult.Succeeded)
+                return Results.Forbid();
+
             try
             {
                 collection.AddItem(request.QuoteId, clock.UtcNow);
@@ -191,17 +197,28 @@ auth.MapPost("/refresh", async (RefreshRequest request, QuotesDbContext db, IJwt
             {
                 return Results.BadRequest(new { error = ex.Message });
             }
-        });
+        }).RequireAuthorization("can-edit-quotes");
 
-        collections.MapDelete("/{id:int}/items/{quoteId:int}", async (int id, int quoteId, ICollectionRepository repo, CancellationToken ct) =>
+        collections.MapDelete("/{id:int}/items/{quoteId:int}", async (int id, int quoteId, ClaimsPrincipal user, ICollectionRepository repo, IAuthorizationService authService, CancellationToken ct) =>
         {
             var collection = await repo.GetByIdAsync(id, ct);
             if (collection is null)
                 return Results.NotFound();
 
-            collection.RemoveItem(quoteId);
-            await repo.UpdateAsync(collection, ct);
-            return Results.NoContent();
-        });
+            var authResult = await authService.AuthorizeAsync(user, collection, new MustOwnCollectionRequirement());
+            if (!authResult.Succeeded)
+                return Results.Forbid();
+
+            try
+            {
+                collection.RemoveItem(quoteId);
+                await repo.UpdateAsync(collection, ct);
+                return Results.NoContent();
+            }
+            catch (InvalidOperationException)
+            {
+                return Results.NotFound();
+            }
+        }).RequireAuthorization("can-edit-quotes");
     }
 }

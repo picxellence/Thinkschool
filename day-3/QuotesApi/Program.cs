@@ -8,6 +8,9 @@ using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
+using QuotesApi.Authorization;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -117,7 +120,15 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("can-read-quotes", policy => policy.RequireClaim("scope", "quotes.read"));
+    options.AddPolicy("can-edit-quotes", policy => policy.RequireClaim("scope", "quotes.write"));
+    options.AddPolicy("can-delete-quotes", policy => policy.RequireClaim("scope", "quotes.delete"));
+});
+
+builder.Services.AddTransient<IClaimsTransformation, ScopeClaimsTransformation>();
+builder.Services.AddSingleton<IAuthorizationHandler, MustOwnQuoteHandler>();
 
 var app = builder.Build();
 

@@ -4,6 +4,9 @@ using QuotesApi.Models;
 using QuotesApi.Repositories;
 using QuotesApi.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Authorization;
+using QuotesApi.Authorization;
+using System.Security.Claims;
 
 
 namespace QuotesApi.Extensions;
@@ -115,7 +118,7 @@ auth.MapPost("/refresh", async (RefreshRequest request, QuotesDbContext db, IJwt
             return quote is null ? Results.NotFound() : Results.Ok(quote);
         });
 
-        group.MapPost("", async (CreateQuoteRequest request, IQuoteRepository repo, CancellationToken ct) =>
+        group.MapPost("", async (CreateQuoteRequest request, ClaimsPrincipal user, IQuoteRepository repo, CancellationToken ct) =>
         {
             var errors = new Dictionary<string, string[]>();
             if (string.IsNullOrWhiteSpace(request.Author))
@@ -126,16 +129,25 @@ auth.MapPost("/refresh", async (RefreshRequest request, QuotesDbContext db, IJwt
             if (errors.Count > 0)
                 return Results.ValidationProblem(errors);
 
-            var quote = new Quote { Author = request.Author, Text = request.Text };
+            var callerId = user.FindFirst("oid")?.Value ?? user.FindFirst("sub")?.Value;
+            var quote = new Quote { Author = request.Author, Text = request.Text, CreatedByUserId = callerId };
             var created = await repo.AddAsync(quote, ct);
             return Results.Created($"/api/quotes/{created.Id}", created);
-        }).RequireAuthorization();
+        }).RequireAuthorization("can-edit-quotes");
 
-        group.MapDelete("/{id:int}", async (int id, IQuoteRepository repo, CancellationToken ct) =>
+        group.MapDelete("/{id:int}", async (int id, ClaimsPrincipal user, IQuoteRepository repo, IAuthorizationService authService, CancellationToken ct) =>
         {
-            var deleted = await repo.DeleteAsync(id, ct);
-            return deleted ? Results.NoContent() : Results.NotFound();
-        }).RequireAuthorization();
+            var quote = await repo.GetByIdAsync(id, ct);
+            if (quote is null)
+                return Results.NotFound();
+
+            var authResult = await authService.AuthorizeAsync(user, quote, new MustOwnQuoteRequirement());
+            if (!authResult.Succeeded)
+                return Results.Forbid();
+
+            await repo.DeleteAsync(id, ct);
+            return Results.NoContent();
+        }).RequireAuthorization("can-delete-quotes");
 
         var collections = app.MapGroup("/collections");
 

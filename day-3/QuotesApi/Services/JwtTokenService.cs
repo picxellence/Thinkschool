@@ -34,7 +34,10 @@ public class JwtTokenService : IJwtTokenService
         {
             new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
             new Claim(JwtRegisteredClaimNames.Email, user.Email),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new Claim("scope", "quotes.read"),
+            new Claim("scope", "quotes.write"),
+            new Claim("scope", "quotes.delete")
         };
 
         var token = new JwtSecurityToken(

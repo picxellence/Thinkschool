@@ -23,7 +23,7 @@ public class ScopeClaimsTransformation : IClaimsTransformation
                 identity.AddClaim(new Claim("scope", scope));
         }
 
-        foreach (var role in principal.FindAll("roles"))
+        foreach (var role in identity.FindAll("roles").ToList())
             identity.AddClaim(new Claim("scope", role.Value));
 
         return Task.FromResult(principal);

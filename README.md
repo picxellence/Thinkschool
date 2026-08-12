@@ -167,3 +167,117 @@ Added self-contained authentication to `QuotesApi`: users log in with email/pass
 - No token → 401 Unauthorized, `WWW-Authenticate: Bearer`
 - Valid token → 201 Created
 - Expired token: middleware configured (`ValidateLifetime: true`) but not confirmed live
+
+## Day 3 — Wire Entra ID as the Identity Provider
+
+Added Microsoft Entra ID as a second identity provider alongside the
+self-issued JWT from Day 2. Both work at the same time, on the same
+endpoints, with no changes to endpoint code.
+
+- `day-3/QuotesApi/Program.cs` — three authentication schemes registered
+- `"Internal"` — validates HS256 tokens minted by `JwtTokenService`
+- `"Entra"` — validates tenant-issued tokens, signing keys pulled live
+  from the tenant's JWKS endpoint via `Authority`
+- `"PolicyScheme"` — an `AddPolicyScheme` router set as the default
+
+### How the routing works
+
+The policy scheme reads the incoming token's `iss` claim without validating
+it, then forwards to whichever scheme can actually verify the signature.
+Tokens issued by `login.microsoftonline.com` or `sts.windows.net` go to
+`Entra`; everything else, including malformed tokens and missing headers,
+falls through to `Internal`, which rejects them with a normal 401.
+
+Because the default authorization policy resolves through the router, every
+endpoint that already called `.RequireAuthorization()` started accepting
+Entra tokens without being touched.
+
+### What it demonstrates
+
+- A policy scheme is a router, not a validator
+- No Entra key material in configuration — `Authority` discovery handles it
+- Tolerates both token versions: v1 (`sts.windows.net` issuer, `api://{guid}`
+  audience) and v2 (`/v2.0` issuer, bare GUID audience)
+- `AuthenticationType` set explicitly per scheme, since JwtBearer otherwise
+  reports `AuthenticationTypes.Federation` for both
+- `Jwt:Key` moved out of `appsettings.json` into user-secrets
+- Exception middleware moved ahead of the auth middleware so it wraps it
+
+### Azure setup
+
+App registration with an Application ID URI of `api://{client-id}`, a
+delegated `access_as_user` scope, and the Azure CLI client id
+(`04b07795-8ddb-461a-bbee-02f9e1bf7b46`) added as an authorized client
+application so `az account get-access-token` can request a token.
+
+### Verified with curl
+
+- `GET /api/auth/whoami` with a login token → `"validatedBy": "Internal"`
+- `GET /api/auth/whoami` with an `az` token → `"validatedBy": "Entra"`,
+  `"scopes": "access_as_user"`
+- `POST /api/quotes` with an Entra token → 201 Created, on an endpoint
+  written before Entra existed
+
+## Day 3 — Authorization Policies and Claims
+
+Authentication answers "who is this." This task makes the API use that
+answer. Two mechanisms, because two different kinds of rule are needed.
+
+- `day-3/QuotesApi/Authorization/ScopeClaimsTransformation.cs`
+- `day-3/QuotesApi/Authorization/MustOwnQuoteRequirement.cs`
+
+### Claim-based policies
+
+Decided from the token alone, before any endpoint code runs:
+
+- `can-read-quotes` → requires `scope=quotes.read`
+- `can-edit-quotes` → requires `scope=quotes.write`
+- `can-delete-quotes` → requires `scope=quotes.delete`
+
+Applied as `.RequireAuthorization("can-edit-quotes")` on `POST /api/quotes`
+and `.RequireAuthorization("can-delete-quotes")` on `DELETE`.
+
+### Normalising claims across schemes
+
+Self-issued tokens carry `scope` claims directly. Entra uses `scp` — a
+single space-separated string for delegated permissions — and `roles` for
+app-only ones. `ScopeClaimsTransformation` implements `IClaimsTransformation`
+and translates both into `scope` claims once per request, so the policies
+never need to know which scheme authenticated the caller.
+
+### Resource-based ownership
+
+"Can this caller delete *this* quote" can't be answered from a token, since
+it depends on a database row. `MustOwnQuoteRequirement` plus
+`MustOwnQuoteHandler` is checked imperatively inside the DELETE endpoint,
+after the quote is loaded, via `IAuthorizationService.AuthorizeAsync`.
+`Quote` gained a nullable `CreatedByUserId`, stamped on creation from the
+caller's `oid` or `sub` claim (migration `AddQuoteOwnership`).
+
+### What it demonstrates
+
+- Policies over roles — `RequireClaim` is portable, `RequireRole("admin")` is
+  brittle
+- 401 means "I don't know who you are"; 403 means "I know, and no"
+- Declarative claim checks and imperative resource checks solve different
+  problems and both are needed
+- DELETE loads first, so a missing quote is 404 and an unowned one is 403
+
+### Tests
+
+`day-3/QuotesApi.Tests/AuthorizationPolicyTests.cs` — 8 passing, against the
+real pipeline via `WebApplicationFactory` on a throwaway SQLite file:
+
+- POST with `quotes.write` → 201
+- POST with only `quotes.read` → 403
+- POST with no token → 401
+- DELETE by the creator → 204
+- DELETE by a different user holding `quotes.delete` → 403
+- DELETE by the creator on a token lacking `quotes.delete` → 403
+
+### Known gaps
+
+- Every issued token carries all three scopes, so scope isn't separating
+  users yet — ownership is doing the work
+- `/collections` still has no authorization and takes `OwnerId` from the
+  request body

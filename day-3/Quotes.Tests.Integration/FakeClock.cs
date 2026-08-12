@@ -1,6 +1,6 @@
 using QuotesApi.Services;
 
-namespace QuotesApi.Tests;
+namespace Quotes.Tests.Integration;
 
 public class FakeClock : IClock
 {

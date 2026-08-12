@@ -2,7 +2,7 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
 
-namespace QuotesApi.Tests;
+namespace Quotes.Tests.Integration;
 
 public class CancellationTests : IClassFixture<WebApplicationFactory<Program>>
 {

@@ -1,7 +1,7 @@
 using QuotesApi.Models;
 using Xunit;
 
-namespace QuotesApi.Tests;
+namespace Quotes.Tests.Integration;
 
 public class CollectionTests
 {

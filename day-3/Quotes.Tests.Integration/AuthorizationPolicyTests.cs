@@ -5,14 +5,19 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.Tokens;
 using QuotesApi.Data;
 using QuotesApi.Models;
-using Xunit;
+using QuotesApi.Services;
 
-namespace QuotesApi.Tests;
+namespace Quotes.Tests.Integration;
 
 // Program.cs reads Jwt:*/Entra:* config into local variables (and AddAuthentication
 // closures) before builder.Build() runs, so a WebApplicationFactory ConfigureAppConfiguration
@@ -20,7 +25,7 @@ namespace QuotesApi.Tests;
 // those reads. Environment variables are picked up by WebApplication.CreateBuilder itself, so
 // setting them (then restoring immediately after the host is forced to build) is what actually
 // reaches those early reads without leaking into other tests' processes for longer than necessary.
-public class AuthorizationPolicyTestsFactory : WebApplicationFactory<Program>
+public class PolicyTestFactory : WebApplicationFactory<Program>
 {
     public const string JwtKey = "authz-policy-tests-signing-key-do-not-use-in-prod!";
     public const string JwtIssuer = "QuotesApi.Tests";
@@ -28,7 +33,9 @@ public class AuthorizationPolicyTestsFactory : WebApplicationFactory<Program>
 
     private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"quotesapi-authz-tests-{Guid.NewGuid():N}.db");
 
-    public AuthorizationPolicyTestsFactory()
+    public FakeClock Clock { get; } = new(DateTimeOffset.UtcNow);
+
+    public PolicyTestFactory()
     {
         var overrides = new Dictionary<string, string?>
         {
@@ -58,6 +65,15 @@ public class AuthorizationPolicyTestsFactory : WebApplicationFactory<Program>
             foreach (var (key, original) in originalValues)
                 Environment.SetEnvironmentVariable(key, original);
         }
+    }
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<IClock>();
+            services.AddSingleton<IClock>(Clock);
+        });
     }
 
     public string MintToken(string sub, params string[] scopes)
@@ -101,18 +117,21 @@ public class AuthorizationPolicyTestsFactory : WebApplicationFactory<Program>
     {
         base.Dispose(disposing);
 
-        if (File.Exists(_dbPath))
-            File.Delete(_dbPath);
+        foreach (var path in new[] { _dbPath, $"{_dbPath}-wal", $"{_dbPath}-shm" })
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
     }
 }
 
-public class AuthorizationPolicyTests : IClassFixture<AuthorizationPolicyTestsFactory>
+public class AuthorizationPolicyTests : IDisposable
 {
-    private readonly AuthorizationPolicyTestsFactory _factory;
+    private readonly PolicyTestFactory _factory = new();
 
-    public AuthorizationPolicyTests(AuthorizationPolicyTestsFactory factory)
+    public void Dispose()
     {
-        _factory = factory;
+        _factory.Dispose();
     }
 
     private HttpClient CreateClient(string? token = null)
@@ -272,6 +291,49 @@ public class AuthorizationPolicyTests : IClassFixture<AuthorizationPolicyTestsFa
         var response = await client.PostAsJsonAsync("/collections", new { name = "Anon Collection" });
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Get_Quotes_NoQueryString_Returns200()
+    {
+        var client = _factory.CreateClient();
+
+        var response = await client.GetAsync("/api/quotes");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Get_Quotes_MissingId_Returns404()
+    {
+        var client = _factory.CreateClient();
+
+        var response = await client.GetAsync("/api/quotes/1");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Post_Quotes_EmptyAuthor_Returns400WithProblemDetailsNamingAuthorField()
+    {
+        var client = CreateClient(_factory.MintToken(Guid.NewGuid().ToString(), "quotes.write"));
+
+        var response = await client.PostAsJsonAsync("/api/quotes", new { author = "", text = "Some text" });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<HttpValidationProblemDetails>();
+        Assert.Contains("author", problem!.Errors.Keys);
+    }
+
+    [Fact]
+    public async Task Database_AfterStartup_HasNoPendingMigrations()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<QuotesDbContext>();
+
+        var pending = await db.Database.GetPendingMigrationsAsync();
+
+        Assert.Empty(pending);
     }
 
     private record QuoteDto(int Id, string Author, string Text, string? CreatedByUserId);

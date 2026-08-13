@@ -163,16 +163,9 @@ auth.MapPost("/refresh", async (RefreshRequest request, QuotesDbContext db, IJwt
 
             var ownerUserId = user.FindFirst("oid")?.Value ?? user.FindFirst("sub")?.Value;
 
-            try
-            {
-                var collection = new Collection(request.Name, ownerId: 0, ownerUserId: ownerUserId);
-                var created = await repo.AddAsync(collection, ct);
-                return Results.Created($"/collections/{created.Id}", created);
-            }
-            catch (ArgumentException ex)
-            {
-                return Results.BadRequest(new { error = ex.Message });
-            }
+            var collection = new Collection(request.Name, ownerId: 0, ownerUserId: ownerUserId);
+            var created = await repo.AddAsync(collection, ct);
+            return Results.Created($"/collections/{created.Id}", created);
         }).RequireAuthorization("can-edit-quotes");
 
         collections.MapPost("/{id:int}/items", async (int id, AddCollectionItemRequest request, ClaimsPrincipal user, ICollectionRepository repo, IAuthorizationService authService, IClock clock, CancellationToken ct) =>

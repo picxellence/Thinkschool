@@ -125,6 +125,7 @@ public class PolicyTestFactory : WebApplicationFactory<Program>
     }
 }
 
+[Collection("EnvironmentMutatingTests")]
 public class AuthorizationPolicyTests : IDisposable
 {
     private readonly PolicyTestFactory _factory = new();

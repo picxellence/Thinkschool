@@ -2,7 +2,9 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using QuotesApi.Configuration;
 using QuotesApi.Models;
 
 namespace QuotesApi.Services;
@@ -16,18 +18,20 @@ public interface IJwtTokenService
 
 public class JwtTokenService : IJwtTokenService
 {
-    private readonly IConfiguration _config;
+    private readonly JwtOptions _options;
 
-    public JwtTokenService(IConfiguration config)
+    // Singleton service, config doesn't change at runtime: IOptions<T> (not
+    // IOptionsSnapshot/IOptionsMonitor) is the correct fit here.
+    public JwtTokenService(IOptions<JwtOptions> options)
     {
-        _config = config;
+        _options = options.Value;
     }
 
-    public int AccessTokenMinutes => int.Parse(_config["Jwt:AccessTokenMinutes"]!);
+    public int AccessTokenMinutes => (int)_options.AccessTokenLifetime.TotalMinutes;
 
     public string GenerateAccessToken(User user)
     {
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_config["Jwt:Key"]!));
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_options.Key));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
         var claims = new[]
@@ -41,10 +45,10 @@ public class JwtTokenService : IJwtTokenService
         };
 
         var token = new JwtSecurityToken(
-            issuer: _config["Jwt:Issuer"],
-            audience: _config["Jwt:Audience"],
+            issuer: _options.Issuer,
+            audience: _options.Audience,
             claims: claims,
-            expires: DateTime.UtcNow.AddMinutes(AccessTokenMinutes),
+            expires: DateTime.UtcNow.Add(_options.AccessTokenLifetime),
             signingCredentials: credentials);
 
         return new JwtSecurityTokenHandler().WriteToken(token);

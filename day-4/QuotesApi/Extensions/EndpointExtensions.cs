@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Mvc;
+using QuotesApi.Configuration;
 using QuotesApi.Data;
 using QuotesApi.Models;
 using QuotesApi.Repositories;
 using QuotesApi.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.Extensions.Options;
 using QuotesApi.Authorization;
 using System.Security.Claims;
 
@@ -19,7 +21,7 @@ public static class EndpointExtensions
 
         var auth = app.MapGroup("/api/auth");
 
-auth.MapPost("/login", async (LoginRequest request, QuotesDbContext db, IJwtTokenService tokenService, IConfiguration config, CancellationToken ct) =>
+auth.MapPost("/login", async (LoginRequest request, QuotesDbContext db, IJwtTokenService tokenService, IOptions<JwtOptions> jwtOptions, CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
         return Results.BadRequest(new { error = "Email and password are required." });
@@ -33,8 +35,7 @@ auth.MapPost("/login", async (LoginRequest request, QuotesDbContext db, IJwtToke
     var accessToken = tokenService.GenerateAccessToken(user);
     var refreshTokenPlain = tokenService.GenerateRefreshToken();
 
-    var refreshDays = int.Parse(config["Jwt:RefreshTokenDays"]!);
-    var refreshTokenEntity = RefreshToken.Create(refreshTokenPlain, user.Id, DateTimeOffset.UtcNow.AddDays(refreshDays));
+    var refreshTokenEntity = RefreshToken.Create(refreshTokenPlain, user.Id, DateTimeOffset.UtcNow.Add(jwtOptions.Value.RefreshTokenLifetime));
     db.RefreshTokens.Add(refreshTokenEntity);
     await db.SaveChangesAsync(ct);
 
@@ -48,7 +49,7 @@ auth.MapPost("/login", async (LoginRequest request, QuotesDbContext db, IJwtToke
     return Results.Ok(response);
 });
 
-auth.MapPost("/refresh", async (RefreshRequest request, QuotesDbContext db, IJwtTokenService tokenService, IConfiguration config, ILogger<Program> logger, CancellationToken ct) =>
+auth.MapPost("/refresh", async (RefreshRequest request, QuotesDbContext db, IJwtTokenService tokenService, IOptions<JwtOptions> jwtOptions, ILogger<Program> logger, CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(request.RefreshToken))
         return Results.BadRequest(new { error = "Refresh token is required." });
@@ -87,8 +88,7 @@ auth.MapPost("/refresh", async (RefreshRequest request, QuotesDbContext db, IJwt
     // Rotate: mint new pair, revoke the old one, link them
     var newAccessToken = tokenService.GenerateAccessToken(user);
     var newRefreshTokenPlain = tokenService.GenerateRefreshToken();
-    var refreshDays = int.Parse(config["Jwt:RefreshTokenDays"]!);
-    var newRefreshTokenEntity = RefreshToken.Create(newRefreshTokenPlain, user.Id, DateTimeOffset.UtcNow.AddDays(refreshDays));
+    var newRefreshTokenEntity = RefreshToken.Create(newRefreshTokenPlain, user.Id, DateTimeOffset.UtcNow.Add(jwtOptions.Value.RefreshTokenLifetime));
 
     db.RefreshTokens.Add(newRefreshTokenEntity);
     await db.SaveChangesAsync(ct);

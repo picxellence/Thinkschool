@@ -29,35 +29,41 @@ public class AuthenticationExtensionsTests
         return new ConfigurationBuilder().AddInMemoryCollection(full).Build();
     }
 
-    private static void AssertThrowsForMissingKey(string missingKey, string expectedMessage)
+    // Per-property validation (missing Key, empty Key, missing TenantId, ...) is no
+    // longer this method's job - it moved to ValidateOnStart, which only fires once
+    // the host actually starts (see JwtOptionsValidationTests). AddApiAuthentication
+    // itself only guards against the whole section being absent, since it needs
+    // concrete values immediately, before builder.Build() runs.
+    [Fact]
+    public void AddApiAuthentication_JwtSectionMissing_Throws()
     {
-        var config = BuildConfig(new Dictionary<string, string?> { [missingKey] = null });
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Entra:TenantId"] = "00000000-0000-0000-0000-000000000000",
+            ["Entra:Audience"] = "00000000-0000-0000-0000-000000000001"
+        }).Build();
         var services = new ServiceCollection();
 
         var act = () => services.AddApiAuthentication(config);
 
-        act.Should().Throw<InvalidOperationException>().WithMessage(expectedMessage);
+        act.Should().Throw<InvalidOperationException>().WithMessage("Jwt configuration section is missing.");
     }
 
     [Fact]
-    public void AddApiAuthentication_MissingJwtKey_Throws() =>
-        AssertThrowsForMissingKey("Jwt:Key", "Jwt:Key is not configured.");
+    public void AddApiAuthentication_EntraSectionMissing_Throws()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Jwt:Key"] = "unit-test-signing-key-at-least-32-bytes-long!",
+            ["Jwt:Issuer"] = "QuotesApi.UnitTests",
+            ["Jwt:Audience"] = "QuotesApi.UnitTests.Clients"
+        }).Build();
+        var services = new ServiceCollection();
 
-    [Fact]
-    public void AddApiAuthentication_MissingJwtIssuer_Throws() =>
-        AssertThrowsForMissingKey("Jwt:Issuer", "Jwt:Issuer is not configured.");
+        var act = () => services.AddApiAuthentication(config);
 
-    [Fact]
-    public void AddApiAuthentication_MissingJwtAudience_Throws() =>
-        AssertThrowsForMissingKey("Jwt:Audience", "Jwt:Audience is not configured.");
-
-    [Fact]
-    public void AddApiAuthentication_MissingEntraTenantId_Throws() =>
-        AssertThrowsForMissingKey("Entra:TenantId", "Entra:TenantId is not configured.");
-
-    [Fact]
-    public void AddApiAuthentication_MissingEntraAudience_Throws() =>
-        AssertThrowsForMissingKey("Entra:Audience", "Entra:Audience is not configured.");
+        act.Should().Throw<InvalidOperationException>().WithMessage("Entra configuration section is missing.");
+    }
 
     [Fact]
     public void AddApiAuthentication_AllConfigPresent_RegistersBothJwtBearerSchemes()

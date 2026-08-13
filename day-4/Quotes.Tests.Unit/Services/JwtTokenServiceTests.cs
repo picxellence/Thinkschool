@@ -1,7 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using FluentAssertions;
-using Microsoft.Extensions.Configuration;
-using NSubstitute;
+using Microsoft.Extensions.Options;
+using QuotesApi.Configuration;
 using QuotesApi.Models;
 using QuotesApi.Services;
 
@@ -9,16 +9,24 @@ namespace Quotes.Tests.Unit.Services;
 
 public class JwtTokenServiceTests
 {
+    private static JwtTokenService CreateService(JwtOptions? options = null)
+    {
+        options ??= new JwtOptions
+        {
+            Key = "unit-test-signing-key-at-least-32-bytes-long!",
+            Issuer = "QuotesApi.UnitTests",
+            Audience = "QuotesApi.UnitTests.Clients",
+            AccessTokenLifetime = TimeSpan.FromMinutes(15)
+        };
+
+        return new JwtTokenService(Options.Create(options));
+    }
+
     [Fact]
     public void GenerateAccessToken_ValidUser_ContainsSubClaimWithUserId()
     {
         // Arrange
-        var config = Substitute.For<IConfiguration>();
-        config["Jwt:Key"].Returns("unit-test-signing-key-at-least-32-bytes-long!");
-        config["Jwt:Issuer"].Returns("QuotesApi.UnitTests");
-        config["Jwt:Audience"].Returns("QuotesApi.UnitTests.Clients");
-        config["Jwt:AccessTokenMinutes"].Returns("15");
-        var service = new JwtTokenService(config);
+        var service = CreateService();
         var user = User.Create("test@example.com", "Password123!");
 
         // Act
@@ -33,12 +41,7 @@ public class JwtTokenServiceTests
     public void GenerateAccessToken_ValidUser_ContainsEmailClaim()
     {
         // Arrange
-        var config = Substitute.For<IConfiguration>();
-        config["Jwt:Key"].Returns("unit-test-signing-key-at-least-32-bytes-long!");
-        config["Jwt:Issuer"].Returns("QuotesApi.UnitTests");
-        config["Jwt:Audience"].Returns("QuotesApi.UnitTests.Clients");
-        config["Jwt:AccessTokenMinutes"].Returns("15");
-        var service = new JwtTokenService(config);
+        var service = CreateService();
         var user = User.Create("test@example.com", "Password123!");
 
         // Act
@@ -53,12 +56,7 @@ public class JwtTokenServiceTests
     public void GenerateAccessToken_ValidUser_ContainsThreeScopeClaims()
     {
         // Arrange
-        var config = Substitute.For<IConfiguration>();
-        config["Jwt:Key"].Returns("unit-test-signing-key-at-least-32-bytes-long!");
-        config["Jwt:Issuer"].Returns("QuotesApi.UnitTests");
-        config["Jwt:Audience"].Returns("QuotesApi.UnitTests.Clients");
-        config["Jwt:AccessTokenMinutes"].Returns("15");
-        var service = new JwtTokenService(config);
+        var service = CreateService();
         var user = User.Create("test@example.com", "Password123!");
 
         // Act
@@ -74,12 +72,7 @@ public class JwtTokenServiceTests
     public void GenerateAccessToken_ConfiguredIssuerAndAudience_AreSetOnToken()
     {
         // Arrange
-        var config = Substitute.For<IConfiguration>();
-        config["Jwt:Key"].Returns("unit-test-signing-key-at-least-32-bytes-long!");
-        config["Jwt:Issuer"].Returns("QuotesApi.UnitTests");
-        config["Jwt:Audience"].Returns("QuotesApi.UnitTests.Clients");
-        config["Jwt:AccessTokenMinutes"].Returns("15");
-        var service = new JwtTokenService(config);
+        var service = CreateService();
         var user = User.Create("test@example.com", "Password123!");
 
         // Act
@@ -95,9 +88,7 @@ public class JwtTokenServiceTests
     public void AccessTokenMinutes_ConfiguredValue_ReturnsParsedInt()
     {
         // Arrange
-        var config = Substitute.For<IConfiguration>();
-        config["Jwt:AccessTokenMinutes"].Returns("15");
-        var service = new JwtTokenService(config);
+        var service = CreateService();
 
         // Act
         var result = service.AccessTokenMinutes;

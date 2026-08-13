@@ -4,8 +4,10 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using QuotesApi.Authorization;
+using QuotesApi.Configuration;
 
 namespace QuotesApi.Extensions;
 
@@ -13,23 +15,29 @@ public static class AuthenticationExtensions
 {
     public static IServiceCollection AddApiAuthentication(this IServiceCollection services, IConfiguration config)
     {
-        // Fail fast at startup instead of producing a null reference on first request.
-        var jwtKey = config["Jwt:Key"]
-            ?? throw new InvalidOperationException("Jwt:Key is not configured.");
-        var jwtIssuer = config["Jwt:Issuer"]
-            ?? throw new InvalidOperationException("Jwt:Issuer is not configured.");
-        var jwtAudience = config["Jwt:Audience"]
-            ?? throw new InvalidOperationException("Jwt:Audience is not configured.");
+        // Runs before builder.Build(), so IOptions<T> isn't resolvable yet - these
+        // closures need concrete values now. This only guards against the whole
+        // section being absent; ValidateOnStart below still catches an individual
+        // missing/invalid property (e.g. Key present but empty) at host startup.
+        var jwtOptions = config.GetSection(JwtOptions.SectionName).Get<JwtOptions>()
+            ?? throw new InvalidOperationException($"{JwtOptions.SectionName} configuration section is missing.");
+        var entraOptions = config.GetSection(EntraOptions.SectionName).Get<EntraOptions>()
+            ?? throw new InvalidOperationException($"{EntraOptions.SectionName} configuration section is missing.");
 
-        var tenantId = config["Entra:TenantId"]
-            ?? throw new InvalidOperationException("Entra:TenantId is not configured.");
-        var entraAudience = config["Entra:Audience"]
-            ?? throw new InvalidOperationException("Entra:Audience is not configured.");
+        services.AddOptions<JwtOptions>()
+            .Bind(config.GetSection(JwtOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        services.AddOptions<EntraOptions>()
+            .Bind(config.GetSection(EntraOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
 
         // v2 issuer once the manifest has requestedAccessTokenVersion = 2.
-        var entraV2Issuer = $"https://login.microsoftonline.com/{tenantId}/v2.0";
+        var entraV2Issuer = $"https://login.microsoftonline.com/{entraOptions.TenantId}/v2.0";
         // v1 issuer, which is what the az CLI returns if it is still on version 1.
-        var entraV1Issuer = $"https://sts.windows.net/{tenantId}/";
+        var entraV1Issuer = $"https://sts.windows.net/{entraOptions.TenantId}/";
 
         services.AddAuthentication(options =>
         {
@@ -43,11 +51,11 @@ public static class AuthenticationExtensions
             options.TokenValidationParameters = new TokenValidationParameters
             {
                 ValidateIssuer = true,
-                ValidIssuer = jwtIssuer,
+                ValidIssuer = jwtOptions.Issuer,
                 ValidateAudience = true,
-                ValidAudience = jwtAudience,
+                ValidAudience = jwtOptions.Audience,
                 ValidateIssuerSigningKey = true,
-                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.Key)),
                 ValidateLifetime = true,
                 ClockSkew = TimeSpan.Zero,
                 NameClaimType = "email",
@@ -67,7 +75,7 @@ public static class AuthenticationExtensions
                 ValidIssuers = [entraV2Issuer, entraV1Issuer],
                 ValidateAudience = true,
                 // Bare GUID for v2 tokens, App ID URI for v1 tokens.
-                ValidAudiences = [entraAudience, $"api://{entraAudience}"],
+                ValidAudiences = [entraOptions.Audience, $"api://{entraOptions.Audience}"],
                 ValidateLifetime = true,
                 ClockSkew = TimeSpan.FromSeconds(30),
                 NameClaimType = "preferred_username",

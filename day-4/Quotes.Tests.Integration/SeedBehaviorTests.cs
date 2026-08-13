@@ -20,8 +20,8 @@ public class ProductionSeedTestFactory : WebApplicationFactory<Program>
             ["Jwt__Key"] = "seed-tests-signing-key-do-not-use-in-prod!",
             ["Jwt__Issuer"] = "QuotesApi.Tests",
             ["Jwt__Audience"] = "QuotesApi.Tests.Clients",
-            ["Jwt__AccessTokenMinutes"] = "15",
-            ["Jwt__RefreshTokenDays"] = "7",
+            ["Jwt__AccessTokenLifetime"] = "00:15:00",
+            ["Jwt__RefreshTokenLifetime"] = "7.00:00:00",
             ["Entra__TenantId"] = "00000000-0000-0000-0000-000000000000",
             ["Entra__Audience"] = "00000000-0000-0000-0000-000000000001",
             ["ConnectionStrings__Default"] = $"Data Source={_dbPath}"

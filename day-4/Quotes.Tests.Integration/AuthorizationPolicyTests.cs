@@ -51,8 +51,8 @@ public class PolicyTestFactory : WebApplicationFactory<Program>
             ["Jwt__Key"] = JwtKey,
             ["Jwt__Issuer"] = JwtIssuer,
             ["Jwt__Audience"] = JwtAudience,
-            ["Jwt__AccessTokenMinutes"] = "15",
-            ["Jwt__RefreshTokenDays"] = "7",
+            ["Jwt__AccessTokenLifetime"] = "00:15:00",
+            ["Jwt__RefreshTokenLifetime"] = "7.00:00:00",
             ["Entra__TenantId"] = "00000000-0000-0000-0000-000000000000",
             ["Entra__Audience"] = "00000000-0000-0000-0000-000000000001",
             ["ConnectionStrings__Default"] = $"Data Source={_dbPath}"

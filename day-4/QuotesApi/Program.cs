@@ -3,9 +3,12 @@ using QuotesApi.Data;
 using QuotesApi.Extensions;
 using QuotesApi.Middleware;
 using QuotesApi.Models;
+using Serilog;
 using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.ConfigureSerilog();
 
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddEndpointsApiExplorer();
@@ -13,7 +16,12 @@ builder.Services.AddApiAuthentication(builder.Configuration);
 
 var app = builder.Build();
 
-// Exception handling goes outermost so it also wraps the auth middleware.
+// Correlation goes outermost so every log line - including from ExceptionMiddleware
+// and the request-logging middleware - carries the request's trace id.
+app.UseMiddleware<CorrelationIdMiddleware>();
+app.UseSerilogRequestLogging();
+
+// Exception handling wraps the auth middleware.
 app.UseMiddleware<ExceptionMiddleware>();
 
 app.UseAuthentication();

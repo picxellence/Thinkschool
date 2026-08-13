@@ -35,7 +35,15 @@ public class PolicyTestFactory : WebApplicationFactory<Program>
 
     public FakeClock Clock { get; } = new(DateTimeOffset.UtcNow);
 
-    public PolicyTestFactory()
+    public PolicyTestFactory() : this(additionalOverrides: null)
+    {
+    }
+
+    // additionalOverrides lets a subclass (see LoggingTestFactory) fold in its own
+    // environment overrides before Server is touched, using the same trick as the
+    // Jwt/Entra values below - a WebApplicationFactory ConfigureAppConfiguration
+    // override arrives too late for the same reason those do.
+    public PolicyTestFactory(IReadOnlyDictionary<string, string?>? additionalOverrides)
     {
         var overrides = new Dictionary<string, string?>
         {
@@ -48,6 +56,12 @@ public class PolicyTestFactory : WebApplicationFactory<Program>
             ["Entra__Audience"] = "00000000-0000-0000-0000-000000000001",
             ["ConnectionStrings__Default"] = $"Data Source={_dbPath}"
         };
+
+        if (additionalOverrides is not null)
+        {
+            foreach (var (key, value) in additionalOverrides)
+                overrides[key] = value;
+        }
 
         var originalValues = new Dictionary<string, string?>();
         foreach (var (key, value) in overrides)

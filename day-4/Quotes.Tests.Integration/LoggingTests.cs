@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Serilog.Core;
-using Serilog.Events;
 
 namespace Quotes.Tests.Integration;
 
@@ -49,11 +48,11 @@ public class LoggingTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var traceId = response.Headers.GetValues("X-Trace-Id").Single();
 
-        var matched = _factory.Sink.Events.Any(e =>
-            e.Properties.TryGetValue("TraceId", out var value)
-            && value is ScalarValue { Value: string s }
-            && s == traceId);
+        // Checks LogEvent.TraceId - the built-in field the console template's {TraceId}
+        // token actually renders - not a same-named custom property, so this proves the
+        // header matches what a human reading the console would see, not a parallel value.
+        var matched = _factory.Sink.Events.Any(e => e.TraceId?.ToString() == traceId);
 
-        Assert.True(matched, "expected a captured log event whose TraceId property matches the response's X-Trace-Id header");
+        Assert.True(matched, "expected a captured log event whose rendered TraceId matches the response's X-Trace-Id header");
     }
 }

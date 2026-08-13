@@ -50,7 +50,7 @@ jobs:
         run: |
           LINE=$(grep 'Line coverage:' CoverageReport/Summary.txt | tr -dc '0-9.')
           echo "Line coverage: ${LINE}%"
-          awk -v c="$LINE" 'BEGIN { exit (c < 70) }'
+          awk -v c="$LINE" 'BEGIN { exit (c < 95) }'
 
       - name: Upload results
         if: always()

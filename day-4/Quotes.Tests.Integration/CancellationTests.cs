@@ -1,14 +1,14 @@
 using System.Net.Http.Json;
-using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
 
 namespace Quotes.Tests.Integration;
 
-public class CancellationTests : IClassFixture<WebApplicationFactory<Program>>
+[Collection("EnvironmentMutatingTests")]
+public class CancellationTests : IClassFixture<PolicyTestFactory>
 {
-    private readonly WebApplicationFactory<Program> _factory;
+    private readonly PolicyTestFactory _factory;
 
-    public CancellationTests(WebApplicationFactory<Program> factory)
+    public CancellationTests(PolicyTestFactory factory)
     {
         _factory = factory;
     }

@@ -42,8 +42,9 @@ public class PolicyTestFactory : WebApplicationFactory<Program>
     // additionalOverrides lets a subclass (see LoggingTestFactory) fold in its own
     // environment overrides before Server is touched, using the same trick as the
     // Jwt/Entra values below - a WebApplicationFactory ConfigureAppConfiguration
-    // override arrives too late for the same reason those do.
-    public PolicyTestFactory(IReadOnlyDictionary<string, string?>? additionalOverrides)
+    // override arrives too late for the same reason those do. Kept non-public: xUnit's
+    // IClassFixture requires exactly one public constructor on the fixture type.
+    protected PolicyTestFactory(IReadOnlyDictionary<string, string?>? additionalOverrides)
     {
         var overrides = new Dictionary<string, string?>
         {

@@ -19,21 +19,21 @@ jobs:
 
       - name: Restore
         run: |
-          dotnet restore day-4/Quotes.Tests.Unit/Quotes.Tests.Unit.csproj
-          dotnet restore day-4/Quotes.Tests.Integration/Quotes.Tests.Integration.csproj
+          dotnet restore day-5/Quotes.Tests.Unit/Quotes.Tests.Unit.csproj
+          dotnet restore day-5/Quotes.Tests.Integration/Quotes.Tests.Integration.csproj
 
       - name: Build
         run: |
-          dotnet build day-4/Quotes.Tests.Unit/Quotes.Tests.Unit.csproj --no-restore
-          dotnet build day-4/Quotes.Tests.Integration/Quotes.Tests.Integration.csproj --no-restore
+          dotnet build day-5/Quotes.Tests.Unit/Quotes.Tests.Unit.csproj --no-restore
+          dotnet build day-5/Quotes.Tests.Integration/Quotes.Tests.Integration.csproj --no-restore
 
       - name: Test
         run: |
-          dotnet test day-4/Quotes.Tests.Unit/Quotes.Tests.Unit.csproj --no-build \
+          dotnet test day-5/Quotes.Tests.Unit/Quotes.Tests.Unit.csproj --no-build \
             --logger "trx;LogFileName=unit-results.trx" \
             --collect:"XPlat Code Coverage" \
             --results-directory ./TestResults
-          dotnet test day-4/Quotes.Tests.Integration/Quotes.Tests.Integration.csproj --no-build \
+          dotnet test day-5/Quotes.Tests.Integration/Quotes.Tests.Integration.csproj --no-build \
             --logger "trx;LogFileName=integration-results.trx" \
             --collect:"XPlat Code Coverage" \
             --results-directory ./TestResults
@@ -60,3 +60,5 @@ jobs:
           path: |
             TestResults/**/*.trx
             CoverageReport/
+
+            

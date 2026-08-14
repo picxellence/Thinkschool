@@ -15,6 +15,7 @@ builder.ConfigureTracing();
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddApiAuthentication(builder.Configuration);
+builder.Services.AddRandomQuoteClient(builder.Configuration);
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("database");
 

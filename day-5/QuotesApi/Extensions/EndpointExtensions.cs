@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using QuotesApi.Clients;
 using QuotesApi.Configuration;
 using QuotesApi.Data;
 using QuotesApi.Models;
@@ -8,6 +9,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Options;
 using QuotesApi.Authorization;
+using Polly.CircuitBreaker;
+using Polly.Timeout;
 using System.Security.Claims;
 
 
@@ -118,6 +121,23 @@ auth.MapPost("/refresh", async (RefreshRequest request, QuotesDbContext db, IJwt
             var quote = await repo.GetByIdAsync(id, ct);
             return quote is null ? Results.NotFound() : Results.Ok(quote);
         });
+
+        // Anonymous - matches /health's reasoning: a caller of this endpoint has no
+        // more control over the upstream than a container probe does, and an upstream
+        // outage must surface as 503, never as an unhandled-exception 500.
+        group.MapGet("/random", async (IRandomQuoteClient client, ILogger<Program> logger, CancellationToken ct) =>
+        {
+            try
+            {
+                var quote = await client.GetRandomQuoteAsync(ct);
+                return Results.Ok(quote);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TimeoutRejectedException or BrokenCircuitException)
+            {
+                logger.LogError(ex, "Random quote upstream unavailable after retries.");
+                return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+            }
+        }).AllowAnonymous();
 
         group.MapPost("", async (CreateQuoteRequest request, ClaimsPrincipal user, IQuoteRepository repo, CancellationToken ct) =>
         {

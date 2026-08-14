@@ -26,6 +26,13 @@ public static class TracingExtensions
                 if (builder.Configuration.GetValue<bool>("Tracing:ConsoleExporterEnabled"))
                     tracing.AddConsoleExporter();
 
+                // OTLP export to a local collector (Aspire dashboard or Jaeger).
+                // Gated for the same reason as the console exporter: with nothing
+                // listening on the endpoint, every export attempt logs a connection
+                // failure, and the 40 integration tests would each produce a flood.
+                if (builder.Configuration.GetValue<bool>("Tracing:OtlpExporterEnabled"))
+                    tracing.AddOtlpExporter();
+
                 // The 40 integration tests each boot a host; none may attempt a network
                 // call to Azure, so an absent connection string means the exporter is
                 // never registered - not registered-but-disabled, never added at all.

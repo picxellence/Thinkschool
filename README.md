@@ -281,3 +281,401 @@ real pipeline via `WebApplicationFactory` on a throwaway SQLite file:
   users yet — ownership is doing the work
 - `/collections` still has no authorization and takes `OwnerId` from the
   request body
+
+## Day 3 — Lock Down the API End-to-End
+
+Closed the gaps the previous task left. Authentication knew who the caller was;
+this task made the API use that answer everywhere.
+
+- `day-3/QuotesApi/Authorization/MustOwnCollectionRequirement.cs`
+
+### The IDOR
+
+`/collections` had no authorization at all, and `CreateCollectionRequest`
+carried `OwnerId` in the request body. Anyone could create a collection owned
+by anyone, and anyone could mutate any collection by id. Fixed by dropping
+`OwnerId` from the request model and taking the owner from the caller's
+`oid`/`sub` claim, with a `MustOwnCollectionRequirement` enforced on the
+add-item and remove-item endpoints after the collection is loaded.
+
+`Collection.OwnerId` is an `int` predating auth and doesn't match the claim
+type. Rather than rewrite a table with data in it, a nullable
+`OwnerUserId` was added alongside and `OwnerId` left as a dead column — a
+deliberate shortcut, recorded rather than hidden.
+
+### Two pre-existing bugs fixed
+
+- `GET /api/quotes` declared `int page, int size` with no defaults, so a
+  request with no query string failed parameter binding with a 400
+- The remove-item endpoint had no try/catch, so a missing item surfaced as a
+  500 instead of a 404
+
+### Tests
+
+Anonymous → 401. Authenticated with the wrong scope → 403. Authenticated with
+the right scope → 200/201. Expired token → 401. Refresh-chain reuse → 401,
+with reuse detection firing and revoking the whole family.
+
+## Day 3 — Unit Tests with xUnit and FluentAssertions
+
+- `day-3/Quotes.Tests.Unit/` — 40 tests, 990 ms, no I/O
+
+One test class per production class, `Method_StateUnderTest_ExpectedBehavior`
+naming, strict AAA, no constructor setup. FluentAssertions pinned to 7.2.0
+since 8.x is licence-gated. Covers `Collection`, `User`, `RefreshToken` (with
+a hand-written `FakeClock`), `ScopeClaimsTransformation`, both ownership
+handlers, and `JwtTokenService`.
+
+### A bug the unit tests found
+
+`ScopeClaimsTransformation` enumerated `identity.FindAll("roles")` while
+calling `AddClaim` on the same identity, which throws
+`InvalidOperationException`. Dormant in practice because internal tokens
+short-circuit on an existing `scope` claim, but any Entra app-only token with
+`roles` and no `scp` would have hit it. The integration suite never reached
+that path.
+
+### Deviation from the brief
+
+The brief asked for tests of a `Quote.Create` factory. `Quote` is still anemic
+in this repo — validation lives in the endpoint. `Collection` is the rich model
+with a factory and invariants, so that was tested instead.
+
+## Day 3 — Integration Tests with WebApplicationFactory
+
+- `day-3/Quotes.Tests.Integration/` — renamed from `QuotesApi.Tests`
+
+Switched from a shared `IClassFixture` to a factory per test, so each test gets
+its own host and its own SQLite file. Added a fake `IClock` in the test host,
+a ProblemDetails assertion on validation failure, and a pending-migrations
+check.
+
+### The cost of real isolation
+
+Measured on the same 13 tests before adding anything: shared fixture ≈ 2.31s,
+per-test factory ≈ 5.8s. Roughly 2.5× slower, all of it host boot and migrate
+paid per test. Worth it — the old suite only passed because tests used
+distinct user ids to dodge each other's rows.
+
+Also found that `Dispose` only deleted the main `.db` file, not SQLite's `-wal`
+and `-shm` sidecars. Harmless with one shared file; per-test isolation would
+have littered temp.
+
+### A test that was removed
+
+A `GET /collections/{id}` 404 test was written and then deleted. That endpoint
+doesn't exist, so the test asserted on ASP.NET's unmatched-route handling
+rather than on any application code.
+
+## Day 3 — Testcontainers with Real SQL Server
+
+- `day-3/Quotes.Tests.Integration/` — SQL Server 2022 as an `ICollectionFixture`
+
+Container started once for the whole suite, with per-test isolation moving from
+separate SQLite files to uniquely named databases on the shared instance. A
+config-driven provider switch keeps SQLite as the default so the app runs
+locally unchanged, with SQL Server migrations in a separate output directory.
+
+**Not verified.** The machine ran out of disk pulling the SQL Server image, and
+the pull failure surfaced as `DockerImageNotFoundException` rather than a disk
+error. Everything compiles; nothing has been proven to run.
+
+## Day 4 — CI with GitHub Actions
+
+- `.github/workflows/ci.yml`
+
+Triggers on push and on pull requests to `main`. Restores, builds, runs both
+test projects with TRX loggers and `--collect:"XPlat Code Coverage"`, merges
+the reports with ReportGenerator excluding EF migrations, enforces a line
+coverage threshold, and uploads results and coverage as artifacts with
+`if: always()` so they survive a failure.
+
+### Proving the gate works
+
+`--collect` produces a number, not a gate — nothing fails on low coverage
+unless you write the check. To confirm the check wasn't silently passing on an
+empty grep, the threshold was temporarily raised to 95%, CI went red, then it
+was restored to 70% and CI went green. Same code both times.
+
+Branch protection requiring the `test` check was not configured — no admin
+rights on the repository in the org.
+
+## Day 4 — Drive Coverage to 80%
+
+83.8% line / 69.3% branch → **99.8% line / 95.4% branch**.
+
+The report's Risk Hotspots flagged one method: `Program.<Main>$` with
+cyclomatic complexity 36 — the entire auth setup living in top-level
+statements. Rather than write host-booting tests to reach it, the wiring was
+extracted into `AuthenticationExtensions.AddApiAuthentication`, with the
+`ForwardDefaultSelector` pulled out as a pure static `SelectScheme(string?)`.
+The issuer routing the whole dual-scheme design rests on is now a plain unit
+test. `Program.cs` went from ~155 lines to ~15.
+
+### The finding
+
+The two collection-item endpoints had zero coverage. Not a missed branch — the
+whole endpoints. Those are exactly the ones that gained `MustOwnCollection` the
+day before, so the 403 path shipped without ever being executed.
+
+### Deleted rather than covered
+
+- `CollectionRepository.DeleteAsync` — nothing calls it, there is no
+  delete-collection endpoint
+- The `catch (ArgumentException)` in create-collection — the endpoint's own
+  validation is identical to `Collection.SetName`'s, so it is unreachable
+
+`RefreshToken.Id` left uncovered on purpose; nothing reads it, and a test whose
+only job is calling a getter is not a test.
+
+### Bug found while covering
+
+`ExceptionMiddleware` sets `ContentType` to `application/problem+json`, then
+`WriteAsJsonAsync` overwrites it to `application/json`. The test asserts actual
+behaviour and the mismatch is flagged rather than silently patched.
+
+## Day 4 — Serilog with Correlation IDs
+
+- `day-4/QuotesApi/Extensions/SerilogExtensions.cs`
+- `day-4/QuotesApi/Middleware/CorrelationIdMiddleware.cs`
+
+Structured templates throughout, per-category levels in configuration, and a
+middleware that pushes the trace id into `LogContext` and echoes it as an
+`X-Trace-Id` response header. Registered before `UseSerilogRequestLogging` and
+`ExceptionMiddleware`, so exception logs carry the id too — otherwise the one
+line you most want to trace is the one without one.
+
+One `GET /api/quotes` produces nine correlated lines: the endpoint log, EF
+Core's command lifecycle, and the request-completion entry. Startup and
+migration lines correctly show it blank.
+
+### Test noise
+
+The integration suite boots the host 40 times. A `[ModuleInitializer]` sets the
+Serilog minimum level to Warning before any host starts; one test opts back in
+with a capturing `ILogEventSink`.
+
+### An order-dependent test CI caught
+
+`CancellationTests` used a raw `WebApplicationFactory` and relied on another
+test class having already set the config environment variables. It passed
+locally and failed on the runner. Confirmed empirically that
+`ConfigureAppConfiguration` can't replace the env-var workaround: `Program.cs`'s
+top-level statements run inside `DeferredHostBuilder.Build()`, so config sources
+fold in after `AddApiAuthentication` has already read them.
+
+## Day 4 — OpenTelemetry Tracing
+
+- `day-4/QuotesApi/Extensions/TracingExtensions.cs`
+
+ASP.NET Core and EF Core instrumentation, with a console exporter gated by
+configuration so tests can silence it without disabling tracing. One request
+produces a server span with the EF query as a child, `ParentSpanId` matching
+exactly.
+
+### Two things named TraceId that weren't the same value
+
+`X-Trace-Id` and the custom `LogContext` property held `ctx.TraceIdentifier`,
+while Serilog's built-in `{TraceId}` token binds to `Activity.Current`, which
+OTel now populates. Different strings — so the id handed to a customer matched
+nothing they could search for. Worse, the logging test still passed, because it
+asserted on the custom property rather than the field the console renders.
+Fixed by sourcing both from `Activity.Current?.TraceId` and changing the test to
+assert on `LogEvent.TraceId`.
+
+## Day 4 — Azure Application Insights
+
+- `day-4/QuotesApi/Configuration/ApplicationInsightsOptions.cs`
+- `day-4/QuotesApi/KQL.md`
+
+Azure Monitor exporter registered only when a connection string is present —
+the integration suite boots the host 40 times and none of them may call Azure.
+Connection string in user-secrets locally, Key Vault reference in App Service,
+empty placeholder in `appsettings.json`.
+
+`operation_Id` in App Insights is the same W3C trace id the API returns in
+`X-Trace-Id`, so a customer quoting that header leads straight to their request
+across `traces`, `requests` and `dependencies`.
+
+Alert on average server response time over 500ms, five-minute window, email
+action group. App-wide rather than scoped to `POST /api/quotes` — the Server
+response time metric has no Request name dimension, so per-endpoint alerting
+needs a log-search rule instead.
+
+### Worth knowing
+
+A malformed connection string crashes the app at startup rather than just
+disabling telemetry. Defensible as fail-fast, but in App Service it means a bad
+config value takes the API down instead of losing telemetry.
+
+## Day 4 — Typed Configuration with IOptions
+
+- `day-4/QuotesApi/Configuration/JwtOptions.cs`, `EntraOptions.cs`
+
+Loose `config["..."]` reads replaced with records bound via
+`AddOptions<T>().Bind(...).ValidateDataAnnotations().ValidateOnStart()`.
+`AccessTokenMinutes`/`RefreshTokenDays` became `TimeSpan` properties, removing
+three `int.Parse` calls — two of them inline in `EndpointExtensions`, which
+would have been missed if the rename hadn't broken the build.
+
+`AddApiAuthentication` runs before `builder.Build()`, so `IOptions<T>` isn't
+resolvable inside it and the section is bound manually there. That guard only
+catches a missing section; `ValidateOnStart` catches missing or empty
+individual properties at host startup, which is the right layer.
+
+`ValidateOnStart` was not taken on trust. Four tests build a real generic host
+through the actual registration path and call `host.Start()`, asserting
+`OptionsValidationException` for a missing key, an empty-string key, and a
+missing tenant id. Registration compiling is not the same as validation firing.
+
+## Day 5 — Diagnose a Slow Endpoint from Traces
+
+- `day-5/DIAGNOSIS.md`, `day-5/docs/trace-before.png`, `docs/trace-after.png`
+
+An N+1 was introduced deliberately in `CollectionRepository.GetByIdAsync`, then
+found from the trace and fixed. Kept as two commits so the fix is a readable
+diff.
+
+| | Trace | Spans | Duration |
+|---|---|---|---|
+| Before | `9388ba6` | 23 | 9.33 ms |
+| After | `3569ee6` | 4 | 2.85 ms |
+
+The waterfall gave it away before reading any code — one parent span with twenty
+near-identical children, each `SELECT ... FROM "Quotes" WHERE "Id" = @item_QuoteId`.
+Fixed with a single `.Include(c => c.Items)`.
+
+Two things the trace surfaced. The per-item `Quote` fetches were dead code —
+`CollectionItem` has no `Quote` navigation, so nothing consumed the results. And
+watching span counts climb 20, 21, 22, 23 across consecutive calls made the
+scaling concrete: the N in N+1, visible in a list view.
+
+On SQLite the whole N+1 cost about 4ms of database time, under any alert
+threshold. Against a network database at 5ms per round trip the same code is
+~115ms. The trace shows the shape; the shape is what scales.
+
+### A missing exporter
+
+Pointing the Aspire dashboard at the app produced nothing. Day 4 wired the
+console exporter and Azure Monitor but never added `AddOtlpExporter()` —
+invisible until something needed it, because the console exporter was doing all
+the visible work.
+
+## Day 5 — Container Image from dotnet publish
+
+- `day-5/CONTAINER.md`
+
+59.2 MB Alpine image, no Dockerfile. Also added a `/health` endpoint, since the
+app had none — `AddHealthChecks` with a `DatabaseHealthCheck` calling
+`CanConnectAsync`, mapped anonymous because a container probe carries no token.
+
+Two failures before it ran.
+
+`--os linux --arch x64` resolves to the glibc RID; alpine is musl. The image
+built and then crashed with `Error relocating /app/libe_sqlite3.so: fcntl64:
+symbol not found`. `SQLitePCLRaw` ships a musl build; it just wasn't selected.
+Fixed with `--os linux-musl --arch x64`. Only affects apps with native
+dependencies.
+
+Then SQLite couldn't create its file. `/app` is root-owned and the .NET base
+images run as non-root. Pointed the connection string at `/tmp` via an
+environment variable.
+
+Verified with three curls: `/health` → 200, `GET /api/quotes` → 200 `[]`, and
+`POST /api/quotes` → 401. The third is the one that matters — a health endpoint
+returning 200 only proves a process is listening.
+
+## Day 5 — Azure Container Apps Environment
+
+- `day-5/containerapp-env.json`
+
+Resource group and a Container Apps environment in Central India. The
+environment holds networking, the log destination and the KEDA autoscaling
+engine; apps are deployments into it, which is why revisions can coexist.
+
+It auto-created its own Log Analytics workspace because none was passed —
+easy to end up paying for ingestion twice without noticing.
+
+## Day 5 — Deploy via azd
+
+Live at `quotes-api.agreeablecliff-bba27145.centralindia.azurecontainerapps.io`.
+
+Four things went wrong between "azd up succeeded" and "the app responded".
+
+1. `MaxNumberOfRegionalEnvironmentsInSubExceeded` — the subscription allows one
+   Container Apps environment per region, and the previous task had used it.
+2. A transient 412 on the first deploy step, cleared by re-running.
+3. `ImagePullBackOff`. azd pushed to the repository `quotes-api` but wrote
+   `day-5/quotes-api-thinkschool-day5` into the container app's image
+   reference. Both `azd up` and `azd deploy` reported SUCCESS throughout,
+   because they verify the push and the ARM update independently and never
+   check that the tag they wrote resolves.
+4. The musl/glibc mismatch again. The csproj set an alpine base image but azd
+   publishes for the glibc RID. The previous task's fix lived in a command-line
+   flag, so azd's own build inherited the original mistake. Switched
+   `ContainerBaseImage` to the Debian variant.
+
+Config reaches the container as environment variables; nothing is baked into
+the image.
+
+## Day 5 — Verify in App Insights with KQL
+
+- `day-5/docs/kql-endpoint-latency.png`, saved as a function `EndpointLatency`
+
+| name | count | p50 | p99 |
+|---|---|---|---|
+| GET /api/quotes/ | 16 | 2.38 | 572.97 |
+| GET /health | 11 | 1.58 | 187.94 |
+| POST /api/auth/login | 1 | 26.06 | 26.06 |
+| GET /api/quotes/{id:int} | 5 | 1.84 | 24.74 |
+| POST /api/quotes/ | 6 | 0.53 | 9.41 |
+
+A p99 of 573ms against a p50 of 2.4ms is a 240× spread on one endpoint doing
+identical work. That's cold start, not variance — one request paid for JIT, EF
+model building and the first SQLite connection. With 16 samples the p99 is just
+"the slowest single request". Percentiles need volume before they mean anything.
+
+`POST /api/auth/login` is 26ms here but 344ms locally. Bcrypt is the difference:
+in Azure the seeded dev user doesn't exist, so the lookup 401s before hashing.
+The fast number is a failure path.
+
+### Why nothing arrived at first
+
+azd injects `APPLICATIONINSIGHTS_CONNECTION_STRING`; `TracingExtensions` reads
+`ApplicationInsights:ConnectionString` through `IOptions`. Different keys, so
+the exporter was never registered. The app ran perfectly and emitted nothing.
+
+## Day 5 — Polly Resilience on HTTP Calls
+
+- `day-5/RESILIENCE.md`, `day-5/QuotesApi/Clients/`
+
+The API made no outbound HTTP calls, so a small typed client was added —
+`GET /api/quotes/random` fetching from zenquotes.io — to have a real dependency
+to protect.
+
+Pipeline order is total timeout → retry (exponential, jittered) → circuit
+breaker, with the numbers in a `ResilienceOptions` record bound from
+configuration rather than hardcoded. Every retry, circuit-open and
+circuit-close writes a structured log line.
+
+The endpoint catches `HttpRequestException`, `TimeoutRejectedException` and
+`BrokenCircuitException` and returns 503. That third one matters — once the
+breaker opens, calls throw a different exception type immediately, so missing
+it produces 500s exactly when the breaker is doing its job.
+
+### Tests
+
+Three, against the real pipeline through a stub `DelegatingHandler`, no network:
+
+- 503, 503, 200 → exactly 3 attempts, succeeds
+- 503 × 4 → retries exhausted, fails within 5s rather than hanging
+- circuit opens → the circuit-breaker-opened log actually fires
+
+The second is the one worth having. A resilience config can look correct and
+still block for 40 seconds per request under sustained failure, which is worse
+than failing straight away.
+
+### Known gap
+
+The retry policy treats every failure as transient. A 400 gets retried three
+times before failing — wasted time and load on an error that will never succeed.

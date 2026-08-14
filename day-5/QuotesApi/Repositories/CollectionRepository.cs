@@ -15,22 +15,9 @@ public class CollectionRepository : ICollectionRepository
 
     public async Task<Collection?> GetByIdAsync(int id, CancellationToken ct)
     {
-        var collection = await _context.Collections
+        return await _context.Collections
+            .Include(c => c.Items)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
-
-        if (collection is null) return null;
-
-        await _context.Entry(collection)
-            .Collection(c => c.Items)
-            .LoadAsync(ct);
-
-        foreach (var item in collection.Items)
-        {
-            await _context.Quotes
-                .FirstOrDefaultAsync(q => q.Id == item.QuoteId, ct);
-        }
-
-        return collection;
     }
 
     public async Task<Collection> AddAsync(Collection collection, CancellationToken ct)

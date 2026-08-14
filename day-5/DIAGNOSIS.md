@@ -153,3 +153,27 @@ would dominate far more. I'd fix it (and did) by replacing the manual load-then-
 `_context.Collections.Include(c => c.Items).FirstOrDefaultAsync(c => c.Id == id, ct)`, cutting
 GetByIdAsync to a single query and the fetched-but-unused `Quote` entities were never even
 referenced by the response, so nothing else needed to be included.
+
+## Trace evidence
+
+Screenshots from the Aspire dashboard (OTLP export), captured from a separate before/after
+reproduction: a fresh collection seeded with 20 quotes added one at a time, screenshotting the
+trace of the 20th (final) `POST /collections/{id}/items` call in each case. Span counts and
+durations differ slightly from the console-exporter run documented above because that call
+lands on a 19-item collection rather than a 20-item one, but the shape of the fix is identical.
+
+### Before — N+1 (`GetByIdAsync` looping per item)
+
+- Trace id: `9388ba6691e54b82b59069592198243c`
+- 23 total spans (22 EF/DB spans + 1 top-level span)
+- Duration: 9.2175 ms
+
+![Aspire dashboard trace showing 23 spans for the N+1 request](docs/trace-before.png)
+
+### After — single query (`.Include(c => c.Items)`)
+
+- Trace id: `3569ee6d03ad3f7a04826aaa9bcbdde7`
+- 4 total spans (3 EF/DB spans + 1 top-level span)
+- Duration: 2.7451 ms
+
+![Aspire dashboard trace showing 4 spans for the fixed request](docs/trace-after.png)

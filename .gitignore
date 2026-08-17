@@ -5,3 +5,4 @@ obj/
 # Node
 node_modules/
 QuotesApi/quotes.db
+day-7/*.db

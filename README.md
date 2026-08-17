@@ -281,3 +281,107 @@ real pipeline via `WebApplicationFactory` on a throwaway SQLite file:
   users yet — ownership is doing the work
 - `/collections` still has no authorization and takes `OwnerId` from the
   request body
+
+  ## Day 7 — Joins and CTEs at Depth
+
+One statement returning each author with their quote count and their most
+recent quote, using CTEs rather than a correlated subquery in the SELECT.
+
+- `day-7/authors-with-latest-quote.sql`
+
+Two CTEs, each naming one idea: `AuthorStats` groups and counts, `RankedQuotes`
+applies `ROW_NUMBER() OVER (PARTITION BY Author ORDER BY Id DESC)`. The outer
+query joins them on `Rn = 1`.
+
+| Author | QuoteCount | MostRecentQuote |
+|---|---|---|
+| Grace Hopper | 4 | Humans are allergic to change. |
+| Donald Knuth | 3 | An algorithm must be seen to be believed. |
+| Alan Kay | 2 | Simple things should be simple, complex things should be possible. |
+| Edsger Dijkstra | 2 | Testing shows the presence, not the absence of bugs. |
+
+### Why a CTE over a correlated subquery
+
+The correlated version re-executes its inner SELECT once per output row — the
+same N+1 shape found in EF Core on Day 5, pushed down into the database where
+a trace won't show it as separate spans. The CTE version scans `Quotes` twice
+regardless of author count, and both passes are set operations the planner can
+optimise.
+
+### Schema gap this exposed
+
+`Quotes` has no created timestamp, so "most recent" is defined by `Id DESC`.
+Valid because `Id` is an autoincrement key, but a proxy — the ordering breaks
+under any bulk import or backfill that inserts historical rows out of sequence.
+
+## Day 7 — Window Functions
+
+Per author, each quote with a running count and the days elapsed since that
+author's previous quote.
+
+- `day-7/window-functions.sql`
+
+`ROW_NUMBER()` for the running count, `SUM(1) OVER (...)` for the running
+total, and `LAG(CreatedAt)` for the previous quote's date, all partitioned by
+author so every window restarts at each new one.
+
+| Author | CreatedAt | QuoteNo | PreviousQuoteAt | DaysSincePrevious |
+|---|---|---|---|---|
+| Donald Knuth | 2026-01-05 | 1 | | |
+| Donald Knuth | 2026-01-12 | 2 | 2026-01-05 | 7 |
+| Donald Knuth | 2026-03-02 | 3 | 2026-01-12 | 49 |
+| Grace Hopper | 2026-01-03 | 1 | | |
+| Grace Hopper | 2026-01-09 | 2 | 2026-01-03 | 6 |
+| Grace Hopper | 2026-02-18 | 3 | 2026-01-09 | 40 |
+| Grace Hopper | 2026-05-27 | 4 | 2026-02-18 | 98 |
+
+Grace Hopper counts 1 to 4 while Alan Kay independently counts 1 to 2, in a
+single pass over the table. `PARTITION BY` is what separates a window function
+from an aggregate.
+
+`ROW_NUMBER` and `SUM(1) OVER` are both included on purpose. They produce
+identical values here, which makes the distinction visible: one assigns
+position, the other accumulates over a frame. They diverge as soon as you sum
+something other than 1, or hit a tie — `RANK` repeats on a tie where
+`ROW_NUMBER` never does.
+
+### The null that matters
+
+The first row per author has a null `DaysSincePrevious`, because `LAG` has
+nothing to look back at. Not a bug, but it breaks downstream: an
+`AVG(DaysSincePrevious)` silently skips those rows, so authors with few quotes
+contribute differently to the denominator than expected.
+
+The `CreatedAt` column had to be added for this task — the schema gap flagged
+in the previous one actually blocked the work, since a day gap can't be
+computed from an autoincrement integer.
+
+## Day 7 — Set Operations from a Spec
+
+Three business questions translated into the operator that says them most
+directly.
+
+- `day-7/set-operations.sql`
+
+The Week-1 schema had no tags, so `Tags(Id, Name, Category)` and a `QuoteTags`
+join table were added, tagged deliberately: four authors left untagged so the
+`EXCEPT` returns rows, two authors spanning both categories so the `INTERSECT`
+isn't empty.
+
+| Question | Operator | Why |
+|---|---|---|
+| Authors with quotes but no tags | `EXCEPT` | Set subtraction — all authors minus the tagged ones |
+| Authors in both 'classic' and 'modern' | `INTERSECT` | Membership in both result sets |
+| Combined distinct tag list | `UNION` | Both sets with duplicates removed |
+
+### What it demonstrates
+
+All three could be written with `NOT EXISTS`, a join and `DISTINCT`. The set
+operators aren't faster — they read closer to the question. "Authors with
+quotes but no tags" is literally a subtraction, and writing it as `EXCEPT`
+means the next person reads the intent rather than reconstructing it from a
+`NOT EXISTS` clause.
+
+`UNION` over `UNION ALL` is the one deliberate cost: de-duplication requires a
+sort. On a large tag table, `UNION ALL` plus an explicit `DISTINCT` only where
+needed would be cheaper.

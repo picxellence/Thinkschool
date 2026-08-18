@@ -17,3 +17,15 @@ Logical reads from SET STATISTICS IO ON.
 | CIX_QuoteViews_ViewId | CLUSTERED | 4.82 MB |
 | IX_QuoteViews_QuoteId_Incl | NONCLUSTERED | 2.63 MB |
 | IX_QuoteViews_UserId_ViewedAt | NONCLUSTERED | 2.82 MB |
+
+## Task 2 — Covering index + included columns
+
+### Query
+
+```sql
+SELECT QuoteId,
+       COUNT(*) AS Views,
+       AVG(DurationMs) AS AvgDurationMs
+FROM QuoteViews
+WHERE QuoteId = 42
+GROUP BY QuoteId;

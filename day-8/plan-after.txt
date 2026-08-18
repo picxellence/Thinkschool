@@ -1,0 +1,14 @@
+Changed database context to 'IndexLab'.
+42 110 1021
+
+(1 rows affected)
+Table 'QuoteViews'. Scan count 1, logical reads 2, physical reads 0, page server reads 0, read-ahead reads 0, page server read-ahead reads 0, lob logical reads 0, lob physical reads 0, lob page server reads 0, lob read-ahead reads 0, lob page server read-ahead reads 0.
+1 1 SELECT QuoteId, COUNT(*) AS Views, AVG(DurationMs) AS AvgDurationMs
+FROM   QuoteViews
+WHERE  QuoteId = 42
+GROUP BY QuoteId 1 1 0 NULL NULL NULL NULL 1.0 NULL NULL NULL 3.446125E-3 NULL NULL SELECT 0 NULL
+0 0   |--Compute Scalar(DEFINE:([Expr1003]=CONVERT_IMPLICIT(int,[Expr1011],0), [Expr1004]=CASE WHEN [Expr1011]=(0) THEN NULL ELSE [Expr1012]/CONVERT_IMPLICIT(int,[Expr1011],0) END)) 1 2 1 Compute Scalar Compute Scalar DEFINE:([Expr1003]=CONVERT_IMPLICIT(int,[Expr1011],0), [Expr1004]=CASE WHEN [Expr1011]=(0) THEN NULL ELSE [Expr1012]/CONVERT_IMPLICIT(int,[Expr1011],0) END) [Expr1003]=CONVERT_IMPLICIT(int,[Expr1011],0), [Expr1004]=CASE WHEN [Expr1011]=(0) THEN NULL ELSE [Expr1012]/CONVERT_IMPLICIT(int,[Expr1011],0) END 1.0 0.0 0.0 19 3.446125E-3 [IndexLab].[dbo].[QuoteViews].[QuoteId], [Expr1003], [Expr1004] NULL PLAN_ROW 0 1.0
+1 1        |--Stream Aggregate(DEFINE:([Expr1011]=Count(*), [Expr1012]=SUM([IndexLab].[dbo].[QuoteViews].[DurationMs]), [IndexLab].[dbo].[QuoteViews].[QuoteId]=ANY([IndexLab].[dbo].[QuoteViews].[QuoteId]))) 1 3 2 Stream Aggregate Aggregate NULL [Expr1011]=Count(*), [Expr1012]=SUM([IndexLab].[dbo].[QuoteViews].[DurationMs]), [IndexLab].[dbo].[QuoteViews].[QuoteId]=ANY([IndexLab].[dbo].[QuoteViews].[QuoteId]) 1.0 0.0 0.00005825 19 3.446125E-3 [IndexLab].[dbo].[QuoteViews].[QuoteId], [Expr1011], [Expr1012] NULL PLAN_ROW 0 1.0
+110 1             |--Index Seek(OBJECT:([IndexLab].[dbo].[QuoteViews].[IX_QuoteViews_QuoteId_Incl]), SEEK:([IndexLab].[dbo].[QuoteViews].[QuoteId]=(42)) ORDERED FORWARD) 1 4 3 Index Seek Index Seek OBJECT:([IndexLab].[dbo].[QuoteViews].[IX_QuoteViews_QuoteId_Incl]), SEEK:([IndexLab].[dbo].[QuoteViews].[QuoteId]=(42)) ORDERED FORWARD [IndexLab].[dbo].[QuoteViews].[QuoteId], [IndexLab].[dbo].[QuoteViews].[DurationMs] 96.25 0.003125 2.6287499E-4 15 3.3878749E-3 [IndexLab].[dbo].[QuoteViews].[QuoteId], [IndexLab].[dbo].[QuoteViews].[DurationMs] NULL PLAN_ROW 0 1.0
+
+(4 rows affected)

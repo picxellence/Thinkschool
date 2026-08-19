@@ -1,0 +1,4 @@
+2026-08-19 07:08:10.410 spid19s deadlock-list
+2026-08-19 07:08:10.410 spid19s  deadlock victim=process9955efc28
+
+(2 rows affected)

@@ -17,6 +17,10 @@ public class QuotesDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
+        modelBuilder.Entity<Quote>()
+            .HasIndex(q => q.Author)
+            .HasDatabaseName("IX_Quotes_Author");
+
         modelBuilder.Entity<Collection>(entity =>
         {
             entity.Property(c => c.Name)

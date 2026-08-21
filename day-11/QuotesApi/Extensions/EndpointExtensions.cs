@@ -202,6 +202,24 @@ auth.MapPost("/refresh", async (RefreshRequest request, QuotesDbContext db, IJwt
             return Results.Ok(summaries);
         }).AllowAnonymous();
 
+        // Fixed version: same response shape as /slow, but a single LINQ GroupBy
+        // that EF translates to one SQL statement (GROUP BY, with a correlated
+        // subquery for the first quote) instead of one query per author.
+        authors.MapGet("/fast", async (QuotesDbContext db, CancellationToken ct) =>
+        {
+            var summaries = await db.Quotes
+                .GroupBy(q => q.Author)
+                .Select(g => new
+                {
+                    author = g.Key,
+                    quoteCount = g.Count(),
+                    firstQuote = g.OrderBy(q => q.Text).Select(q => q.Text).FirstOrDefault()
+                })
+                .ToListAsync(ct);
+
+            return Results.Ok(summaries);
+        }).AllowAnonymous();
+
         var collections = app.MapGroup("/collections");
 
         collections.MapPost("", async (CreateCollectionRequest request, ClaimsPrincipal user, ICollectionRepository repo, CancellationToken ct) =>

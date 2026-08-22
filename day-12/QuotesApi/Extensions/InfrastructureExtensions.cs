@@ -18,6 +18,7 @@ public static class InfrastructureExtensions
         services.AddScoped<ICollectionRepository, CollectionRepository>();
         services.AddScoped<CreateCollectionCommandHandler>();
         services.AddScoped<CollectionSummaryQueryHandler>();
+        services.AddScoped<CollectionSummaryDapperQueryHandler>();
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<IJwtTokenService, JwtTokenService>();
 
